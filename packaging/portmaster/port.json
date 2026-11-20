@@ -1,0 +1,23 @@
+{
+  "version": 4,
+  "name": "choochoodubsiren.zip",
+  "items": ["ChooChooDubSiren.sh", "choochoodubsiren"],
+  "items_opt": [],
+  "attr": {
+    "title": "ChooChoo Dub Siren",
+    "porter": ["ChooChoo Dub Siren contributors"],
+    "desc": "A handheld dub siren instrument with tape-style echo.",
+    "desc_md": null,
+    "inst": "Ready to run",
+    "inst_md": null,
+    "genres": ["other"],
+    "rtr": true,
+    "exp": false,
+    "runtime": [],
+    "store": [],
+    "availability": "full",
+    "reqs": ["!lowres"],
+    "arch": ["aarch64"],
+    "min_glibc": "2.29"
+  }
+}
