@@ -1,0 +1,126 @@
+name: Build packages
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+      - run: make test
+
+  windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-SDL2
+      - name: Test and package
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\msys64\ucrt64\bin;C:\msys64\usr\bin;$env:PATH"
+          $env:SDL_AUDIODRIVER = 'dummy'
+          & C:\msys64\ucrt64\bin\g++.exe -std=c++17 -Wall -Wextra -O2 -IC:\msys64\ucrt64\include tests\app_test.cpp src\siren.cpp src\font12x16.cpp -LC:\msys64\ucrt64\lib -lSDL2 -o app-test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\app-test.exe "$env:RUNNER_TEMP\app-test-data"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\scripts\build-windows.ps1
+          $env:SDL_VIDEODRIVER = 'dummy'
+          $env:APPDATA = $env:RUNNER_TEMP
+          & .\build\windows-release\DubSiren.exe --smoke "$env:RUNNER_TEMP\smoke.bmp"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Compress-Archive -Path .\build\windows-release\* -DestinationPath .\build\ChooChooDubSiren-Windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: build\ChooChooDubSiren-Windows.zip
+          if-no-files-found: error
+
+  arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and verify PortMaster and Pak
+        run: |
+          image=ghcr.io/monkeyx-net/portmaster-build-templates/portmaster-builder:aarch64-latest
+          docker pull "$image"
+          docker run --rm -v "$GITHUB_WORKSPACE:/workspace" -w /workspace "$image" bash -lc \
+            'apt-get update && apt-get install -y g++ make pkg-config libsdl2-dev zip && CXX=g++ sh scripts/package-arm.sh'
+          unzip -t build/choochoodubsiren.zip
+          unzip -t build/ChooChooDubSiren.pak.zip
+          readelf -h build/arm64/dubsiren | grep -q AArch64
+          glibc=$(readelf -V build/arm64/dubsiren | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)
+          test "$(printf '%s\n' "$glibc" GLIBC_2.29 | sort -V | tail -1)" = GLIBC_2.29
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portmaster
+          path: build/choochoodubsiren.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pak
+          path: build/ChooChooDubSiren.pak.zip
+          if-no-files-found: error
+
+  miyoo:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare Miyoo SDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake libtool xz-utils zip unzip
+          cache="$RUNNER_TEMP/miyoo"
+          mkdir -p "$cache/toolchain" "$cache/sdl/lib" "$cache/sdl/include/SDL2"
+          curl --fail --location --retry 3 -o "$cache/toolchain.tar.xz" \
+            https://github.com/shauninman/miyoomini-toolchain-buildroot/releases/download/v0.0.3/miyoomini-toolchain.tar.xz
+          tar -xf "$cache/toolchain.tar.xz" -C "$cache/toolchain"
+          git init "$cache/sdl-source"
+          git -C "$cache/sdl-source" remote add origin https://github.com/Rparadise-Team/sdl2_miyoo_new.git
+          git -C "$cache/sdl-source" fetch --depth 1 origin 3c68ed01fee7feffd4ea338b1cc5018a455e2be9
+          git -C "$cache/sdl-source" checkout --detach FETCH_HEAD
+          curl --fail --location --retry 3 -o "$cache/runtime.zip" \
+            https://github.com/paiheulevrai/Choochootracker/releases/download/v1.0.19-alpha/ChooChooTracker-2026-10-19-1.0.19-alpha-MiyooPorts.zip
+          echo "72201a55264661e5a4c10c492c9d5bf9c48af77be9390bcbba441df0f4c4a326  $cache/runtime.zip" | sha256sum --check
+          unzip -p "$cache/runtime.zip" Roms/PORTS/Games/ChooChooTracker/libs/libSDL2-2.0.so.0 > "$cache/sdl/lib/libSDL2-2.0.so.0"
+          unzip -p "$cache/runtime.zip" Roms/PORTS/Games/ChooChooTracker/libs/libneonarmmiyoo.so > "$cache/sdl/lib/libneonarmmiyoo.so"
+          ln -s libSDL2-2.0.so.0 "$cache/sdl/lib/libSDL2.so"
+          toolchain="$cache/toolchain/miyoomini-toolchain"
+          export CC="$toolchain/bin/arm-linux-gnueabihf-gcc"
+          export CXX="$toolchain/bin/arm-linux-gnueabihf-g++"
+          export AR="$toolchain/bin/arm-linux-gnueabihf-ar"
+          export RANLIB="$toolchain/bin/arm-linux-gnueabihf-ranlib"
+          cd "$cache/sdl-source/sdl2"
+          ./autogen.sh
+          ./configure --host=arm-linux --disable-oss --disable-alsa \
+            --disable-video-opengl --disable-video-opengles --disable-video-opengles2 \
+            --enable-audio-mini --enable-video-mini
+          cp include/*.h "$cache/sdl/include/SDL2/"
+          cp LICENSE.txt "$cache/sdl/COPYING.txt"
+          cp ../LICENSE "$cache/sdl/MIYOO-LICENSE.txt"
+      - name: Build and verify MiyooPorts
+        run: |
+          export MIYOO_TOOLCHAIN="$RUNNER_TEMP/miyoo/toolchain/miyoomini-toolchain"
+          export MIYOO_SDL2_ROOT="$RUNNER_TEMP/miyoo/sdl"
+          sh scripts/package-miyoo.sh
+          unzip -t build/ChooChooDubSiren-MiyooPorts.zip
+          binary=build/miyooports/Roms/PORTS/Games/ChooChooDubSiren/dubsiren
+          readelf -h "$binary" | grep -q ARM
+          glibc=$(readelf -V "$binary" | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)
+          test "$(printf '%s\n' "$glibc" GLIBC_2.28 | sort -V | tail -1)" = GLIBC_2.28
+          ! readelf -d "$binary" | grep -q 'libstdc++'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: miyoo
+          path: build/ChooChooDubSiren-MiyooPorts.zip
+          if-no-files-found: error

@@ -67,6 +67,25 @@ int main() {
   free.render(second.data(), 6000);
   assert(first != second);
 
+  for (bool retrig : {false, true}) {
+    Siren overlap(48000), continuing(48000);
+    SirenPatch overlapPatch;
+    overlapPatch.rate = 3.0f;
+    overlapPatch.depth = 2.0f;
+    overlapPatch.retrig = retrig;
+    assert(overlap.setPatch(overlapPatch) && continuing.setPatch(overlapPatch));
+    overlap.setGate(true);
+    continuing.setGate(true);
+    overlap.render(first.data(), 6000);
+    continuing.render(second.data(), 6000);
+    assert(first == second);
+    overlap.setGate(true, true);
+    continuing.setGate(true);
+    overlap.render(first.data(), 6000);
+    continuing.render(second.data(), 6000);
+    assert((first != second) == retrig);
+  }
+
   Siren safe(48000);
   SirenPatch loud;
   loud.echo = true;

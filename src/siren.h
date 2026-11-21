@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -14,7 +13,6 @@ struct SirenPatch {
   float feedback = 0.45f;
   float echoMix = 0.35f;
   int wave = 0;
-  std::array<int, 4> triggerWaves{{2, 1, 0, 5}};
   int lfoWave = 0;
   bool retrig = true;
   bool echo = false;
@@ -24,7 +22,7 @@ class Siren {
  public:
   explicit Siren(int sampleRate);
   bool setPatch(const SirenPatch& patch);
-  void setGate(bool down);
+  void setGate(bool down, bool retrigger = false);
   void panic();
   void render(int16_t* output, std::size_t frames);
   static bool valid(const SirenPatch& patch);

@@ -2,7 +2,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 export PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
-make -B -j4 BUILD=build/arm64 CXX=aarch64-linux-gnu-g++ LDFLAGS="-static-libstdc++ -static-libgcc" all
+make -B -j4 BUILD=build/arm64 CXX="${CXX:-aarch64-linux-gnu-g++}" LDFLAGS="-static-libstdc++ -static-libgcc" all
 mkdir -p build/portmaster/choochoodubsiren build/nextui
 cp build/arm64/dubsiren build/portmaster/choochoodubsiren/dubsiren.aarch64
 cp build/arm64/dubsiren build/nextui/dubsiren.aarch64

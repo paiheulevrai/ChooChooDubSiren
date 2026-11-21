@@ -29,31 +29,86 @@ extern "C" const uint8_t font12x16[];
 
 namespace {
 constexpr int width = 640, height = 480;
-constexpr int parameterCount = 15, axisCount = 4, triggerCount = 4;
+constexpr int parameterCount = 17, axisCount = 4, triggerCount = 4;
 constexpr int leftTrigger = SDL_CONTROLLER_BUTTON_MAX;
 constexpr int rightTrigger = SDL_CONTROLLER_BUTTON_MAX + 1;
 const char* waves[] = {"SINE", "TRIANGLE", "SQUARE", "SAW UP", "SAW DOWN", "PULSE", "LOFI TRI"};
 const char* lfoWaves[] = {"SINE", "TRIANGLE", "SQUARE", "SAW UP", "SAW DOWN"};
 const char* axisNames[] = {"LX", "LY", "RX", "RY"};
-const char* assignmentNames[] = {"OFF", "PITCH", "LFO RATE", "LFO DEPTH", "VOLUME", "ECHO TIME", "FEEDBACK", "ECHO MIX"};
+const char* assignmentNames[] = {"OFF", "PITCH", "LFO RATE", "LFO DEPTH"};
+const char* triggerNames[] = {"L1", "L2", "R1", "R2"};
+const char* factoryNames[] = {"DUB", "REGGAE", "STEPPER", "DANCEHALL"};
+
+struct Instrument {
+  float pitch = 600.0f, rate = 4.0f, depth = 1.0f;
+  int wave = 0, lfoWave = 0;
+  bool retrig = true;
+};
+
+struct Sound {
+  std::array<Instrument, triggerCount> instruments{{
+      {600, 4, 1, 2, 0, true}, {600, 4, 1, 1, 0, true},
+      {600, 4, 1, 0, 0, true}, {600, 4, 1, 5, 0, true}}};
+  float volume = 0.25f, echoTime = 0.35f, feedback = 0.45f, echoMix = 0.35f;
+  bool echo = false;
+};
+
+SirenPatch voicePatch(const Sound& sound, int instrument) {
+  const Instrument& voice = sound.instruments[instrument];
+  SirenPatch patch;
+  patch.pitch = voice.pitch;
+  patch.rate = voice.rate;
+  patch.depth = voice.depth;
+  patch.wave = voice.wave;
+  patch.lfoWave = voice.lfoWave;
+  patch.retrig = voice.retrig;
+  patch.volume = sound.volume;
+  patch.echoTime = sound.echoTime;
+  patch.feedback = sound.feedback;
+  patch.echoMix = sound.echoMix;
+  patch.echo = sound.echo;
+  return patch;
+}
+
+bool validSound(const Sound& sound) {
+  for (int i = 0; i < triggerCount; ++i)
+    if (!Siren::valid(voicePatch(sound, i))) return false;
+  return true;
+}
+
+Sound factoryPreset(int index);
+
+struct Pointer {
+  bool active = false, mouse = false;
+  SDL_TouchID device = 0;
+  SDL_FingerID finger = 0;
+  int trigger = -1, control = -1, axis = -1, field = -1;
+  float lastY = 0.0f, remainder = 0.0f;
+};
 
 struct App {
   Siren siren{48000};
-  SirenPatch patch;
+  Sound patch = factoryPreset(0);
   SDL_AudioDeviceID audio = 0;
   SDL_GameController* controller = nullptr;
   SDL_Window* window = nullptr;
   SDL_Renderer* renderer = nullptr;
   std::string folder;
   std::string status = "READY";
-  std::array<int, axisCount> assignments{{1, 2, 3, 5}};
+  std::array<int, axisCount> assignments{{1, 2, 3, 0}};
+  std::array<int, axisCount> axisRate{{100, 100, 100, 100}};
+  std::array<bool, axisCount> axisInvert{{false, true, false, false}};
   std::array<unsigned, SDL_CONTROLLER_BUTTON_MAX> heldButtons{};
   std::array<unsigned, triggerCount> triggers{};
   std::array<uint64_t, triggerCount> triggerOrder{};
+  std::array<Pointer, 8> pointers{};
   uint64_t nextTriggerOrder = 0;
   int activeTrigger = -1;
+  int selectedInstrument = 0;
   std::atomic<int> peak{0};
   int selection = 0;
+  int page = 0;
+  int theme = 0;
   int preset = 0;
   unsigned gateSources = 0;
   unsigned triggerHeld = 0;
@@ -62,10 +117,12 @@ struct App {
   bool assignMode = false;
   bool editUsed = false;
   bool editWithSelect = false;
+  bool selectUsed = false;
   unsigned selectSources = 0;
   bool powerHeld = false;
   Uint32 powerPressed = 0;
   int selectedAxis = 0;
+  int selectedAxisField = 0;
 };
 
 void audioCallback(void* user, Uint8* stream, int length) {
@@ -79,8 +136,8 @@ void audioCallback(void* user, Uint8* stream, int length) {
 }
 
 void updateAudio(App& app) {
-  SirenPatch sounding = app.patch;
-  if (app.activeTrigger >= 0) sounding.wave = app.patch.triggerWaves[app.activeTrigger];
+  const SirenPatch sounding = voicePatch(app.patch,
+      app.activeTrigger >= 0 ? app.activeTrigger : app.selectedInstrument);
   SDL_LockAudioDevice(app.audio);
   app.siren.setPatch(sounding);
   SDL_UnlockAudioDevice(app.audio);
@@ -93,23 +150,31 @@ void trigger(App& app, int index, unsigned source, bool down) {
   if (down) app.triggers[index] |= source;
   else app.triggers[index] &= ~source;
   const bool isDown = app.triggers[index] != 0;
-  if (!wasDown && isDown) app.triggerOrder[index] = ++app.nextTriggerOrder;
+  const bool pressed = !wasDown && isDown;
+  if (pressed) app.triggerOrder[index] = ++app.nextTriggerOrder;
   app.triggerHeld = 0;
   for (unsigned held : app.triggers) app.triggerHeld |= held;
   if (app.triggerBlocked) {
     if (!app.triggerHeld) app.triggerBlocked = false;
     return;
   }
+  const int previousTrigger = app.activeTrigger;
   app.activeTrigger = -1;
   for (int i = 0; i < triggerCount; ++i)
     if (app.triggers[i] && (app.activeTrigger < 0 ||
         app.triggerOrder[i] > app.triggerOrder[app.activeTrigger])) app.activeTrigger = i;
   app.gateSources = app.activeTrigger >= 0 ? 1 : 0;
-  SirenPatch sounding = app.patch;
-  if (app.activeTrigger >= 0) sounding.wave = app.patch.triggerWaves[app.activeTrigger];
+  if (pressed) app.selectedInstrument = index;
+  else if (app.activeTrigger >= 0 && app.activeTrigger != previousTrigger)
+    app.selectedInstrument = app.activeTrigger;
+  if (app.page == 0 && app.selection >= 3 && app.selection <= 6 &&
+      (pressed || app.activeTrigger != previousTrigger) && app.activeTrigger >= 0)
+    app.selection = 3 + app.selectedInstrument;
+  const SirenPatch sounding = voicePatch(app.patch,
+      app.activeTrigger >= 0 ? app.activeTrigger : app.selectedInstrument);
   SDL_LockAudioDevice(app.audio);
   app.siren.setPatch(sounding);
-  app.siren.setGate(app.gateSources != 0);
+  app.siren.setGate(app.gateSources != 0, pressed);
   SDL_UnlockAudioDevice(app.audio);
 }
 
@@ -157,6 +222,7 @@ void suspendNextUI(App& app) {
   app.triggerBlocked = false;
   app.triggers.fill(0);
   app.heldButtons.fill(0);
+  app.pointers.fill(Pointer{});
   app.powerHeld = false;
   SDL_PauseAudioDevice(app.audio, 0);
   app.status = status == 0 ? "RESUMED" : "SUSPEND FAILED";
@@ -192,37 +258,54 @@ bool savePreset(const App& app, int slot) {
   std::ostringstream s;
   const auto& p = app.patch;
   s.precision(9);
-  s << "DUBSIREN2\n" << p.pitch << ' ' << p.rate << ' ' << p.depth << ' '
-    << p.volume << ' ' << p.echoTime << ' ' << p.feedback << ' ' << p.echoMix << ' '
-    << p.wave << ' ' << p.lfoWave << ' ' << p.retrig << ' ' << p.echo;
-  for (int wave : p.triggerWaves) s << ' ' << wave;
-  s << '\n';
+  s << "DUBSIREN3\n" << p.volume << ' ' << p.echoTime << ' '
+    << p.feedback << ' ' << p.echoMix << ' ' << p.echo << '\n';
+  for (const Instrument& voice : p.instruments)
+    s << voice.pitch << ' ' << voice.rate << ' ' << voice.depth << ' '
+      << voice.wave << ' ' << voice.lfoWave << ' ' << voice.retrig << '\n';
   return writeFile(presetPath(app, slot), s.str());
 }
 
-bool loadPreset(const App& app, int slot, SirenPatch& result) {
+bool loadPreset(const App& app, int slot, Sound& result) {
   std::ifstream in(std::filesystem::u8path(presetPath(app, slot)), std::ios::binary);
   std::string header, extra;
   int retrig, echo;
-  SirenPatch p;
-  if (!(in >> header >> p.pitch >> p.rate >> p.depth >> p.volume >> p.echoTime >>
-        p.feedback >> p.echoMix >> p.wave >> p.lfoWave >> retrig >> echo) ||
-      (header != "DUBSIREN1" && header != "DUBSIREN2") || (retrig != 0 && retrig != 1) ||
-      (echo != 0 && echo != 1)) return false;
-  if (header == "DUBSIREN1") p.triggerWaves[2] = p.wave;
-  else for (int& wave : p.triggerWaves) if (!(in >> wave)) return false;
+  Sound p;
+  if (!(in >> header)) return false;
+  if (header == "DUBSIREN3") {
+    if (!(in >> p.volume >> p.echoTime >> p.feedback >> p.echoMix >> echo) ||
+        (echo != 0 && echo != 1)) return false;
+    for (Instrument& voice : p.instruments) {
+      if (!(in >> voice.pitch >> voice.rate >> voice.depth >> voice.wave >> voice.lfoWave >> retrig) ||
+          (retrig != 0 && retrig != 1)) return false;
+      voice.retrig = retrig != 0;
+    }
+  } else if (header == "DUBSIREN1" || header == "DUBSIREN2") {
+    Instrument legacy;
+    if (!(in >> legacy.pitch >> legacy.rate >> legacy.depth >> p.volume >> p.echoTime >>
+          p.feedback >> p.echoMix >> legacy.wave >> legacy.lfoWave >> retrig >> echo) ||
+        (retrig != 0 && retrig != 1) || (echo != 0 && echo != 1) ||
+        legacy.wave < 0 || legacy.wave > 6) return false;
+    legacy.retrig = retrig != 0;
+    const std::array<int, triggerCount> defaultWaves{{2, 1, legacy.wave, 5}};
+    for (int i = 0; i < triggerCount; ++i) {
+      p.instruments[i] = legacy;
+      if (header == "DUBSIREN1") p.instruments[i].wave = defaultWaves[i];
+      else if (!(in >> p.instruments[i].wave)) return false;
+    }
+  } else return false;
   if (in >> extra) return false;
-  p.retrig = retrig != 0;
   p.echo = echo != 0;
-  if (!Siren::valid(p)) return false;
+  if (!validSound(p)) return false;
   result = p;
   return true;
 }
 
 bool saveAssignments(const App& app) {
   std::ostringstream s;
-  s << "DUBAXIS1";
-  for (int assignment : app.assignments) s << ' ' << assignment;
+  s << "DUBAXIS2";
+  for (int i = 0; i < axisCount; ++i)
+    s << ' ' << app.assignments[i] << ' ' << app.axisRate[i] << ' ' << app.axisInvert[i];
   s << '\n';
   return writeFile(app.folder + "axes.txt", s.str());
 }
@@ -237,22 +320,78 @@ void loadAssignments(App& app) {
     return;
   }
   std::string header, extra;
-  std::array<int, axisCount> assignments;
-  if (!(in >> header >> assignments[0] >> assignments[1] >> assignments[2] >> assignments[3]) ||
-      header != "DUBAXIS1" || (in >> extra) ||
-      std::any_of(assignments.begin(), assignments.end(), [](int n) { return n < 0 || n > 7; })) {
+  std::array<int, axisCount> assignments{}, rates{{100, 100, 100, 100}};
+  std::array<bool, axisCount> inverted{};
+  bool invalid = !(in >> header) || (header != "DUBAXIS1" && header != "DUBAXIS2");
+  bool removed = false;
+  for (int i = 0; i < axisCount && !invalid; ++i) {
+    int invert = 0;
+    if (!(in >> assignments[i]) || assignments[i] < 0 ||
+        assignments[i] > (header == "DUBAXIS1" ? 7 : 3)) {
+      invalid = true;
+    } else if (header == "DUBAXIS1") {
+      inverted[i] = assignments[i] == 2;
+      if (assignments[i] > 3) { assignments[i] = 0; removed = true; }
+    } else if (!(in >> rates[i] >> invert) || rates[i] < 10 || rates[i] > 300 ||
+               (invert != 0 && invert != 1)) {
+      invalid = true;
+    } else {
+      inverted[i] = invert != 0;
+    }
+  }
+  if (invalid || (in >> extra)) {
     app.status = "INVALID AXIS FILE";
     return;
   }
   app.assignments = assignments;
+  app.axisRate = rates;
+  app.axisInvert = inverted;
+  if (removed) app.status = "COMMON AXES DISABLED";
 }
 
-SirenPatch factoryPreset(int index) {
-  SirenPatch p;
+bool saveTheme(const App& app) {
+  return writeFile(app.folder + "theme.txt", std::string("DUBTHEME1 ") +
+                   std::to_string(app.theme) + "\n");
+}
+
+void loadTheme(App& app) {
+  const std::string path = app.folder + "theme.txt";
+  std::ifstream in(std::filesystem::u8path(path));
+  if (!in) {
+    std::error_code error;
+    if (std::filesystem::exists(std::filesystem::u8path(path), error) || error)
+      app.status = "CANNOT READ THEME FILE";
+    return;
+  }
+  std::string header, extra;
+  int theme;
+  if (!(in >> header >> theme) || header != "DUBTHEME1" ||
+      (theme != 0 && theme != 1) || (in >> extra)) {
+    app.status = "INVALID THEME FILE";
+    return;
+  }
+  app.theme = theme;
+}
+
+Sound factoryPreset(int index) {
+  Sound p;
   switch (index) {
-    case 1: p.pitch = 900; p.rate = 7; p.depth = 1.8f; p.lfoWave = 4; p.echo = true; break;
-    case 2: p.pitch = 450; p.rate = 12; p.depth = 0.8f; p.lfoWave = 2; p.echo = true; break;
-    case 3: p.pitch = 500; p.triggerWaves[2] = 6; p.rate = 3; p.depth = 1.2f; p.echo = true; break;
+    case 0:
+      p.instruments = {{{420, 2.2f, 1.2f, 0, 0, true}, {650, 5, 1.8f, 2, 1, true},
+                        {800, 0.7f, 0.7f, 1, 0, false}, {360, 9, 1.1f, 5, 4, true}}};
+      p.echo = true; p.echoTime = 0.38f; p.feedback = 0.55f; p.echoMix = 0.38f; break;
+    case 1:
+      p.instruments = {{{560, 3.2f, 0.8f, 1, 0, true}, {740, 6, 1.1f, 0, 1, true},
+                        {480, 1.2f, 1.4f, 6, 3, false}, {950, 4, 0.6f, 5, 0, true}}};
+      p.echo = true; p.echoTime = 0.3f; p.feedback = 0.4f; p.echoMix = 0.3f; break;
+    case 2:
+      p.instruments = {{{330, 7, 1.5f, 2, 2, true}, {480, 12, 0.8f, 5, 1, true},
+                        {720, 4, 2, 3, 4, true}, {270, 2, 1.2f, 6, 0, false}}};
+      p.echo = true; p.echoTime = 0.24f; p.feedback = 0.5f; p.echoMix = 0.32f; break;
+    case 3:
+      p.instruments = {{{900, 8, 1.2f, 5, 3, true}, {1200, 14, 0.6f, 2, 2, true},
+                        {620, 5, 1.7f, 4, 1, true}, {760, 0.8f, 0.9f, 1, 4, false}}};
+      p.echo = true; p.echoTime = 0.19f; p.feedback = 0.32f; p.echoMix = 0.25f; break;
   }
   return p;
 }
@@ -262,7 +401,7 @@ void recall(App& app) {
     app.status = "RELEASE TRIGGER FIRST";
     return;
   }
-  SirenPatch loaded;
+  Sound loaded;
   if (app.preset < 4) loaded = factoryPreset(app.preset);
   else if (!loadPreset(app, app.preset - 4, loaded)) {
     app.status = "PRESET MISSING OR INVALID";
@@ -274,21 +413,27 @@ void recall(App& app) {
 }
 
 void adjust(App& app, int index, float direction) {
-  SirenPatch& p = app.patch;
+  Sound& p = app.patch;
+  Instrument& voice = p.instruments[app.selectedInstrument];
   switch (index) {
-    case 0: p.pitch = std::clamp(p.pitch + direction * 30.0f, 80.0f, 3000.0f); break;
-    case 1: p.rate = std::clamp(p.rate + direction * 0.2f, 0.1f, 30.0f); break;
-    case 2: p.depth = std::clamp(p.depth + direction * 0.05f, 0.0f, 3.0f); break;
+    case 0: voice.pitch = std::clamp(voice.pitch + direction * 30.0f, 80.0f, 3000.0f); break;
+    case 1: voice.rate = std::clamp(voice.rate + direction * 0.2f, 0.1f, 30.0f); break;
+    case 2: voice.depth = std::clamp(voice.depth + direction * 0.05f, 0.0f, 3.0f); break;
     case 3: case 4: case 5: case 6:
-      p.triggerWaves[index - 3] = (p.triggerWaves[index - 3] + (direction > 0 ? 1 : 6)) % 7; break;
-    case 7: p.lfoWave = (p.lfoWave + (direction > 0 ? 1 : 4)) % 5; break;
-    case 8: p.retrig = !p.retrig; break;
+      p.instruments[index - 3].wave = (p.instruments[index - 3].wave + (direction > 0 ? 1 : 6)) % 7; break;
+    case 7: voice.lfoWave = (voice.lfoWave + (direction > 0 ? 1 : 4)) % 5; break;
+    case 8: voice.retrig = !voice.retrig; break;
     case 9: p.volume = std::clamp(p.volume + direction * 0.01f, 0.0f, 0.5f); break;
     case 10: p.echo = !p.echo; break;
     case 11: p.echoTime = std::clamp(p.echoTime + direction * 0.01f, 0.05f, 1.5f); break;
     case 12: p.feedback = std::clamp(p.feedback + direction * 0.01f, 0.0f, 0.85f); break;
     case 13: p.echoMix = std::clamp(p.echoMix + direction * 0.01f, 0.0f, 0.75f); break;
     case 14: app.preset = (app.preset + (direction > 0 ? 1 : 7)) % 8; break;
+    case 15:
+      app.theme = 1 - app.theme;
+      app.status = saveTheme(app) ? "THEME SAVED" : "ERROR SAVING THEME";
+      break;
+    case 16: voice.wave = (voice.wave + (direction > 0 ? 1 : 6)) % 7; break;
   }
   updateAudio(app);
 }
@@ -312,38 +457,78 @@ void rect(SDL_Renderer* r, int x, int y, int w, int h, SDL_Color c) {
   SDL_RenderFillRect(r, &box);
 }
 
-void dial(SDL_Renderer* r, int cx, int cy, float value, SDL_Color light) {
-  const SDL_Color dim{static_cast<Uint8>(light.r / 3), static_cast<Uint8>(light.g / 3),
-                      static_cast<Uint8>(light.b / 3), 255};
-  const SDL_Color edge{100, 91, 67, 255}, face{63, 64, 51, 255};
-  value = std::clamp(value, 0.0f, 1.0f);
-  for (int i = 0; i < 9; ++i) {
-    const float angle = 2.35f + i * (4.72f / 8.0f);
-    const int x = cx + static_cast<int>(std::sin(angle) * 27.0f);
-    const int y = cy - static_cast<int>(std::cos(angle) * 27.0f);
-    rect(r, x - 2, y - 2, 4, 4, i <= value * 8 ? light : dim);
-  }
-  for (int y = -20; y <= 20; y += 4) {
-    for (int x = -20; x <= 20; x += 4) {
-      const int distance = x * x + y * y;
-      if (distance <= 20 * 20)
-        rect(r, cx + x, cy + y, 4, 4, distance > 15 * 15 ? edge : face);
-    }
-  }
-  const float angle = 2.35f + value * 4.72f;
-  for (int distance = 6; distance < 16; distance += 4)
-    rect(r, cx + static_cast<int>(std::sin(angle) * distance) - 2,
-         cy - static_cast<int>(std::cos(angle) * distance) - 2, 4, 4, light);
+struct Palette {
+  SDL_Color background, chassis, inset, edge, face, label, muted, accent, focus;
+};
+
+constexpr SDL_Color rastaGreen{7, 137, 48, 255};
+constexpr SDL_Color rastaGold{252, 221, 9, 255};
+constexpr SDL_Color rastaRed{218, 18, 26, 255};
+
+Palette palette(int theme) {
+  if (theme == 0)
+    return {{39, 42, 36, 255}, {218, 210, 184, 255}, {198, 190, 166, 255},
+            {108, 104, 85, 255}, {49, 55, 48, 255}, {31, 35, 28, 255},
+            {94, 98, 82, 255}, {20, 77, 30, 255}, rastaRed};
+  return {{15, 19, 15, 255}, {43, 51, 42, 255}, {31, 39, 30, 255},
+          {105, 113, 98, 255}, {20, 25, 20, 255}, {235, 230, 207, 255},
+          {156, 165, 147, 255}, {113, 218, 101, 255}, rastaGold};
 }
 
-void panel(SDL_Renderer* r, int x, int y, int w, int h, bool selected) {
-  rect(r, x, y, w, h, selected ? SDL_Color{213, 171, 43, 255} : SDL_Color{81, 77, 60, 255});
-  rect(r, x + 3, y + 3, w - 6, h - 6, {32, 38, 34, 255});
-  rect(r, x + 7, y + 7, 3, 3, {143, 125, 68, 255});
-  rect(r, x + w - 10, y + 7, 3, 3, {143, 125, 68, 255});
-  for (int i = 0; i < 4 && 15 + i * 6 < h - 5; ++i)
-    rect(r, x + w - 9, y + 15 + i * 6, 3, 3,
-         i == 0 && selected ? SDL_Color{213, 171, 43, 255} : SDL_Color{50, 83, 55, 255});
+float dialAngle(float value) {
+  constexpr float pi = 3.14159265358979323846f;
+  return -5.0f * pi / 6.0f + std::clamp(value, 0.0f, 1.0f) * 5.0f * pi / 3.0f;
+}
+
+void disc(SDL_Renderer* r, int cx, int cy, int radius, SDL_Color color) {
+  SDL_SetRenderDrawColor(r, color.r, color.g, color.b, 255);
+  for (int y = -radius; y <= radius; ++y) {
+    const int x = static_cast<int>(std::sqrt(radius * radius - y * y));
+    SDL_RenderDrawLine(r, cx - x, cy + y, cx + x, cy + y);
+  }
+}
+
+void dial(SDL_Renderer* r, int cx, int cy, float value, const Palette& p) {
+  value = std::clamp(value, 0.0f, 1.0f);
+  const int current = static_cast<int>(std::round(value * 24.0f));
+  for (int i = 0; i <= 24; ++i) {
+    const float angle = dialAngle(i / 24.0f);
+    const SDL_Color tick = i <= current ? p.focus : p.muted;
+    SDL_SetRenderDrawColor(r, tick.r, tick.g, tick.b, 255);
+    const int inner = 35;
+    const int x1 = cx + static_cast<int>(std::sin(angle) * inner);
+    const int y1 = cy - static_cast<int>(std::cos(angle) * inner);
+    const int x2 = cx + static_cast<int>(std::sin(angle) * 41);
+    const int y2 = cy - static_cast<int>(std::cos(angle) * 41);
+    const int dx = static_cast<int>(std::round(std::cos(angle)));
+    const int dy = static_cast<int>(std::round(std::sin(angle)));
+    for (int offset = -1; offset <= 1; ++offset)
+      SDL_RenderDrawLine(r, x1 + offset * dx, y1 + offset * dy,
+                         x2 + offset * dx, y2 + offset * dy);
+  }
+  const SDL_Color shine{static_cast<Uint8>(std::min(255, p.face.r + 18)),
+                        static_cast<Uint8>(std::min(255, p.face.g + 18)),
+                        static_cast<Uint8>(std::min(255, p.face.b + 18)), 255};
+  disc(r, cx, cy + 2, 33, p.face);
+  disc(r, cx, cy, 33, p.edge);
+  disc(r, cx, cy, 31, p.face);
+  disc(r, cx, cy, 28, shine);
+  disc(r, cx, cy, 26, p.face);
+  disc(r, cx, cy, 23, shine);
+  const float angle = dialAngle(value);
+  const int dx = static_cast<int>(std::round(std::cos(angle)));
+  const int dy = static_cast<int>(std::round(std::sin(angle)));
+  SDL_SetRenderDrawColor(r, rastaGold.r, rastaGold.g, rastaGold.b, 255);
+  for (int offset = -1; offset <= 1; ++offset)
+    SDL_RenderDrawLine(r, cx + static_cast<int>(std::sin(angle) * 17) + offset * dx,
+                       cy - static_cast<int>(std::cos(angle) * 17) + offset * dy,
+                       cx + static_cast<int>(std::sin(angle) * 31) + offset * dx,
+                       cy - static_cast<int>(std::cos(angle) * 31) + offset * dy);
+}
+
+void panel(SDL_Renderer* r, int x, int y, int w, int h, bool selected, const Palette& p) {
+  rect(r, x, y, w, h, selected ? p.focus : p.edge);
+  rect(r, x + 3, y + 3, w - 6, h - 6, p.inset);
 }
 
 void centeredText(SDL_Renderer* r, int cx, int y, const std::string& value, SDL_Color color) {
@@ -353,127 +538,164 @@ void centeredText(SDL_Renderer* r, int cx, int y, const std::string& value, SDL_
 std::string value(const App& app, int index) {
   char buf[64];
   const auto& p = app.patch;
+  const Instrument& voice = p.instruments[app.selectedInstrument];
   switch (index) {
-    case 0: std::snprintf(buf, sizeof buf, "%.0f HZ", p.pitch); break;
-    case 1: std::snprintf(buf, sizeof buf, "%.1f HZ", p.rate); break;
-    case 2: std::snprintf(buf, sizeof buf, "%.2f OCT", p.depth); break;
-    case 3: case 4: case 5: case 6: return waves[p.triggerWaves[index - 3]];
-    case 7: return lfoWaves[p.lfoWave];
-    case 8: return p.retrig ? "ON" : "OFF";
+    case 0: std::snprintf(buf, sizeof buf, "%.0f HZ", voice.pitch); break;
+    case 1: std::snprintf(buf, sizeof buf, "%.1f HZ", voice.rate); break;
+    case 2: std::snprintf(buf, sizeof buf, "%.2f OCT", voice.depth); break;
+    case 3: case 4: case 5: case 6: return waves[p.instruments[index - 3].wave];
+    case 7: return lfoWaves[voice.lfoWave];
+    case 8: return voice.retrig ? "ON" : "OFF";
     case 9: std::snprintf(buf, sizeof buf, "%.0f %%", p.volume * 200); break;
     case 10: return p.echo ? "ON" : "OFF";
     case 11: std::snprintf(buf, sizeof buf, "%.0f MS", p.echoTime * 1000); break;
     case 12: std::snprintf(buf, sizeof buf, "%.0f %%", p.feedback * 100); break;
     case 13: std::snprintf(buf, sizeof buf, "%.0f %%", p.echoMix * 100); break;
-    default: std::snprintf(buf, sizeof buf, "%s %d", app.preset < 4 ? "FACTORY" : "USER", app.preset % 4 + 1); break;
+    case 14:
+      if (app.preset < 4) return factoryNames[app.preset];
+      std::snprintf(buf, sizeof buf, "USER %d", app.preset - 3); break;
+    case 15: return app.theme == 0 ? "DAY RASTAFARI" : "NIGHT RASTAFARI";
+    default: return waves[voice.wave];
   }
   return buf;
 }
 
 void draw(App& app) {
   SDL_Renderer* r = app.renderer;
-  const SDL_Color cream{230, 219, 171, 255}, green{54, 138, 82, 255},
-      gold{213, 171, 43, 255}, red{168, 60, 53, 255};
-  SDL_SetRenderDrawColor(r, 18, 24, 21, 255);
+  const Palette p = palette(app.theme);
+  SDL_SetRenderDrawColor(r, p.background.r, p.background.g, p.background.b, 255);
   SDL_RenderClear(r);
-  rect(r, 0, 0, width, 8, red);
-  rect(r, 0, 8, width, 5, gold);
-  rect(r, 0, 13, width, 5, green);
-  text(r, 18, 24, "CHOOCHOO DUB SIREN", gold);
-  text(r, 18, 44, app.gateSources ? "SIGNAL ON" : "SIGNAL READY", app.gateSources ? red : green);
-  const SDL_Color indicatorColors[] = {green, green, gold, green, red, gold};
-  const unsigned blink = SDL_GetTicks() / 250;
-  for (int i = 0; i < 24; ++i) {
-    const SDL_Color c = indicatorColors[(i + blink / 4) % 6];
-    rect(r, 284 + i * 8, 48, 4, 4, (i + blink) % 5 == 0 ?
-         SDL_Color{static_cast<Uint8>(c.r / 3), static_cast<Uint8>(c.g / 3), static_cast<Uint8>(c.b / 3), 255} : c);
-  }
+  rect(r, 8, 8, 624, 464, p.edge);
+  rect(r, 12, 12, 616, 456, p.chassis);
+  rect(r, 12, 12, 616, 48, p.face);
+  text(r, 24, 19, "CHOOCHOO DUB SIREN", p.label.r > 128 ? p.label : SDL_Color{230, 230, 220, 255});
+  const SDL_Color headerAccent = rastaGold;
+  text(r, 24, 39, app.assignMode ? "03 STICKS" : (app.page == 0 ? "01 INSTRUMENT" : "02 COMMON"),
+       headerAccent);
+  text(r, 408, 39, std::string("PART ") + triggerNames[app.selectedInstrument], headerAccent);
+  const int peak = app.peak.load(std::memory_order_relaxed);
+  for (int i = 0; i < 16; ++i)
+    rect(r, 444 + i * 8, 24, 5, 6, peak * 16 / 32768 > i ? headerAccent : p.muted);
+  rect(r, 584, 20, 20, 14, app.gateSources ? headerAccent : p.muted);
+  rect(r, 12, 60, 205, 4, rastaRed);
+  rect(r, 217, 60, 206, 4, rastaGold);
+  rect(r, 423, 60, 205, 4, rastaGreen);
+
   if (app.assignMode) {
-    centeredText(r, 320, 76, "STICK CONTROL MATRIX", gold);
+    text(r, 34, 79, "AXIS", p.label);
+    text(r, 112, 79, "ASSIGN", p.label);
+    text(r, 364, 79, "RATE", p.label);
+    text(r, 492, 79, "INVERT", p.label);
     for (int i = 0; i < axisCount; ++i) {
-      const int x = 24 + (i % 2) * 302, y = 110 + (i / 2) * 120;
-      panel(r, x, y, 290, 104, app.selectedAxis == i);
-      text(r, x + 20, y + 20, axisNames[i], cream);
-      text(r, x + 20, y + 53, assignmentNames[app.assignments[i]], gold);
-      for (int n = 0; n < 8; ++n)
-        rect(r, x + 206 + n * 8, y + 74, 4, 5, n == app.assignments[i] ? green : SDL_Color{53, 65, 52, 255});
+      const int y = 105 + i * 58;
+      text(r, 34, y + 15, axisNames[i], p.label);
+      panel(r, 100, y, 248, 46, app.selectedAxis == i && app.selectedAxisField == 0, p);
+      text(r, 112, y + 15, assignmentNames[app.assignments[i]], p.accent);
+      panel(r, 352, y, 120, 46, app.selectedAxis == i && app.selectedAxisField == 1, p);
+      text(r, 364, y + 15, std::to_string(app.axisRate[i]) + "%", p.accent);
+      panel(r, 476, y, 144, 46, app.selectedAxis == i && app.selectedAxisField == 2, p);
+      text(r, 492, y + 15, app.axisInvert[i] ? "ON" : "OFF", p.accent);
     }
-    centeredText(r, 320, 363, "DPAD SELECT  A+DPAD ASSIGN", cream);
-    text(r, 24, 396, app.status, gold);
-    text(r, 24, 420, "A/B/START BACK   SELECT+B PANIC", cream);
-    text(r, 24, 444, "L1 L2 R1 R2 PLAY", cream);
-  } else {
-    const int topParameters[] = {0, 1, 2, 9};
-    const char* topNames[] = {"PITCH", "LFO RATE", "DEPTH", "VOLUME"};
-    const float topValues[] = {(app.patch.pitch - 80.0f) / 2920.0f,
-                               (app.patch.rate - 0.1f) / 29.9f,
-                               app.patch.depth / 3.0f, app.patch.volume / 0.5f};
-    const SDL_Color colors[] = {red, gold, green, gold};
-    for (int i = 0; i < 4; ++i) {
-      const int x = 14 + i * 154;
-      panel(r, x, 65, 150, 104, app.selection == topParameters[i]);
-      centeredText(r, x + 75, 71, topNames[i], cream);
-      dial(r, x + 75, 117, topValues[i], colors[i]);
-      centeredText(r, x + 75, 150, value(app, topParameters[i]), gold);
-    }
-    const int echoParameters[] = {11, 12, 13};
-    const char* echoNames[] = {"ECHO TIME", "FEEDBACK", "ECHO MIX"};
-    const float echoValues[] = {(app.patch.echoTime - 0.05f) / 1.45f,
-                                app.patch.feedback / 0.85f, app.patch.echoMix / 0.75f};
-    for (int i = 0; i < 3; ++i) {
-      const int x = 14 + i * 154;
-      panel(r, x, 178, 150, 104, app.selection == echoParameters[i]);
-      centeredText(r, x + 75, 184, echoNames[i], cream);
-      dial(r, x + 75, 230, echoValues[i], colors[i]);
-      centeredText(r, x + 75, 263, value(app, echoParameters[i]), gold);
-    }
-    const int switchParameters[] = {7, 8, 10};
-    const char* switchNames[] = {"LFO", "RETRIG", "ECHO"};
-    for (int i = 0; i < 3; ++i) {
-      const int y = 178 + i * 35;
-      panel(r, 476, y, 150, 34, app.selection == switchParameters[i]);
-      text(r, 482, y + 10, switchNames[i], cream);
-      text(r, i == 0 ? 526 : 572, y + 10, value(app, switchParameters[i]), gold);
-    }
-    const char* triggerNames[] = {"L1", "L2", "R1", "R2"};
-    const SDL_Color triggerColors[] = {red, gold, green, red};
+    centeredText(r, 320, 346, "DPAD SELECT  A+DPAD EDIT", p.label);
+  } else if (app.page == 0) {
     for (int i = 0; i < triggerCount; ++i) {
-      const int x = 14 + i * 154;
-      panel(r, x, 291, 150, 62, app.selection == 3 + i);
-      text(r, x + 14, 299, triggerNames[i], cream);
-      rect(r, x + 101, 295, 34, 24, {17, 20, 18, 255});
-      rect(r, x + 104, 298, 28, 18, app.gateSources && app.activeTrigger == i ?
-           triggerColors[i] : SDL_Color{76, 69, 48, 255});
-      centeredText(r, x + 75, 328, value(app, 3 + i), gold);
+      const int x = 20 + i * 151;
+      panel(r, x, 69, 145, 57, app.selection == 3 + i, p);
+      text(r, x + 12, 79, triggerNames[i], p.label);
+      rect(r, x + 116, 79, 14, 14, app.selectedInstrument == i ? p.accent : p.muted);
+      centeredText(r, x + 72, 103, value(app, 3 + i), p.label);
     }
-    panel(r, 14, 362, 380, 30, app.selection == 14);
-    text(r, 27, 370, "PRESET", cream);
-    text(r, 135, 370, value(app, 14), gold);
-    text(r, 414, 370, "OUT", cream);
-    const int peak = app.peak.load(std::memory_order_relaxed);
-    for (int i = 0; i < 20; ++i)
-      rect(r, 465 + i * 7, 375, 5, 7, peak * 20 / 32768 > i ?
-           (i >= 16 ? red : i >= 11 ? gold : green) : SDL_Color{45, 50, 42, 255});
-    text(r, 24, 396, app.status, gold);
-    text(r, 24, 416, "L1 L2 R1 R2 PLAY   B PANIC", cream);
-    text(r, 24, 436, "A/X LOAD  Y SAVE   START STICKS", cream);
-    text(r, 24, 456, "DPAD SELECT  A+DPAD EDIT  SEL+START EXIT", cream);
+    const Instrument& voice = app.patch.instruments[app.selectedInstrument];
+    const float values[] = {(voice.pitch - 80.0f) / 2920.0f,
+                            (voice.rate - 0.1f) / 29.9f, voice.depth / 3.0f};
+    const char* names[] = {"PITCH", "LFO RATE", "LFO DEPTH"};
+    for (int i = 0; i < 3; ++i) {
+      const int x = 20 + i * 201, cx = x + 97;
+      panel(r, x, 137, 195, 153, app.selection == i, p);
+      centeredText(r, cx, 151, names[i], p.label);
+      dial(r, cx, 218, values[i], p);
+      centeredText(r, cx, 265, value(app, i), p.label);
+    }
+    panel(r, 20, 301, 195, 58, app.selection == 16, p);
+    text(r, 32, 311, "WAVEFORM", p.label);
+    text(r, 32, 335, value(app, 16), p.accent);
+    panel(r, 221, 301, 195, 58, app.selection == 7, p);
+    text(r, 233, 311, "LFO SHAPE", p.label);
+    text(r, 233, 335, value(app, 7), p.accent);
+    panel(r, 422, 301, 195, 58, app.selection == 8, p);
+    text(r, 434, 311, "RETRIG", p.label);
+    text(r, 434, 335, value(app, 8), p.accent);
+  } else {
+    panel(r, 20, 80, 146, 202, app.selection == 9, p);
+    centeredText(r, 93, 98, "MASTER", p.label);
+    centeredText(r, 93, 119, "VOLUME", p.label);
+    dial(r, 93, 185, app.patch.volume / 0.5f, p);
+    centeredText(r, 93, 237, value(app, 9), p.label);
+    rect(r, 176, 70, 444, 212, p.edge);
+    rect(r, 179, 73, 438, 206, p.inset);
+    centeredText(r, 398, 80, "COMMON DELAY", p.label);
+    const int ids[] = {11, 12, 13};
+    const char* names[] = {"TIME", "FEEDBACK", "MIX"};
+    const float values[] = {(app.patch.echoTime - 0.05f) / 1.45f,
+                            app.patch.feedback / 0.85f, app.patch.echoMix / 0.75f};
+    for (int i = 0; i < 3; ++i) {
+      const int x = 187 + i * 142, cx = x + 68;
+      panel(r, x, 103, 136, 130, app.selection == ids[i], p);
+      centeredText(r, cx, 115, names[i], p.label);
+      dial(r, cx, 172, values[i], p);
+      centeredText(r, cx, 213, value(app, ids[i]), p.label);
+    }
+    panel(r, 187, 238, 420, 32, app.selection == 10, p);
+    text(r, 202, 246, "ECHO", p.label);
+    text(r, 500, 246, value(app, 10), p.accent);
+    panel(r, 20, 293, 368, 66, app.selection == 14, p);
+    text(r, 34, 305, "PRESET", p.label);
+    text(r, 34, 331, "<", p.accent);
+    centeredText(r, 204, 331, value(app, 14), p.accent);
+    text(r, 356, 331, ">", p.accent);
+    panel(r, 398, 293, 222, 66, app.selection == 15, p);
+    text(r, 412, 305, "THEME", p.label);
+    text(r, 412, 331, value(app, 15), p.accent);
+  }
+
+  text(r, 24, 372, app.status, p.accent);
+  if (app.assignMode) {
+    text(r, 24, 402, "SELECT PAGE  B/START BACK  SELECT+B PANIC", p.label);
+    text(r, 24, 424, "A TOGGLE INVERT", p.label);
+    text(r, 24, 446, "L1 L2 R1 R2 PLAY", p.label);
+  } else {
+    text(r, 24, 396, "DPAD NAV  A+DPAD EDIT  SELECT PAGE", p.label);
+    text(r, 24, 418, "L1 L2 R1 R2 PLAY   B PANIC   START STICKS", p.label);
+    text(r, 24, 440, "X LOAD  Y SAVE   SELECT+START EXIT", p.label);
   }
   SDL_RenderPresent(r);
 }
 
 int nextSelection(int selection, int button) {
-  // Up, down, left, right follow the visible panels, including the tall switches.
   static const int neighbors[parameterCount][4] = {
-    {0, 11, 0, 1}, {1, 12, 0, 2}, {2, 13, 1, 9},
-    {11, 14, 3, 4}, {12, 14, 3, 5}, {13, 14, 4, 6}, {10, 14, 5, 6},
-    {9, 8, 13, 7}, {7, 10, 13, 8}, {9, 7, 2, 9}, {8, 6, 13, 10},
-    {0, 3, 11, 12}, {1, 4, 11, 13}, {2, 5, 12, 8}, {4, 14, 14, 14}
+    {3, 16, 0, 1}, {4, 7, 0, 2}, {6, 8, 1, 2},
+    {3, 0, 3, 4}, {4, 1, 3, 5}, {5, 1, 4, 6}, {6, 2, 5, 6},
+    {1, 4, 16, 8}, {2, 6, 7, 8}, {9, 14, 9, 11}, {12, 15, 9, 10},
+    {11, 10, 9, 12}, {12, 10, 11, 13}, {13, 10, 12, 13}, {9, 14, 14, 15},
+    {10, 15, 14, 15}, {0, 3, 16, 7}
   };
   const int direction = button == SDL_CONTROLLER_BUTTON_DPAD_UP ? 0 :
                         button == SDL_CONTROLLER_BUTTON_DPAD_DOWN ? 1 :
                         button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? 2 : 3;
   return neighbors[selection][direction];
+}
+
+void adjustAxis(App& app, int axis, int field, int step) {
+  if (field == 0) {
+    int& assignment = app.assignments[axis];
+    assignment = (assignment + (step > 0 ? 1 : 3)) % 4;
+  } else if (field == 1) {
+    int& rate = app.axisRate[axis];
+    rate = std::clamp(rate + step * 10, 10, 300);
+  } else {
+    app.axisInvert[axis] = !app.axisInvert[axis];
+  }
+  app.status = saveAssignments(app) ? "AXES SAVED" : "ERROR SAVING AXES";
 }
 
 void action(App& app, int button, bool down, unsigned source) {
@@ -494,8 +716,26 @@ void action(App& app, int button, bool down, unsigned source) {
   down = app.heldButtons[button] != 0;
   if (button == SDL_CONTROLLER_BUTTON_BACK) {
     app.selectSources = app.heldButtons[button];
+    if (down) {
+      app.selectUsed = app.heldButtons[SDL_CONTROLLER_BUTTON_A] ||
+                       app.heldButtons[SDL_CONTROLLER_BUTTON_B] ||
+                       app.heldButtons[SDL_CONTROLLER_BUTTON_START];
+      if (app.heldButtons[SDL_CONTROLLER_BUTTON_A]) app.editWithSelect = true;
+    } else if (!app.selectUsed) {
+      if (app.assignMode) {
+        app.assignMode = false;
+        app.page = 0;
+        app.selection = 3 + app.selectedInstrument;
+      } else if (app.page == 0) {
+        app.page = 1;
+        app.selection = 9;
+      } else {
+        app.assignMode = true;
+      }
+    }
     return;
   }
+  if (down && app.selectSources) app.selectUsed = true;
   if (button == SDL_CONTROLLER_BUTTON_A) {
     if (down) {
       app.editUsed = app.heldButtons[SDL_CONTROLLER_BUTTON_DPAD_UP] ||
@@ -506,12 +746,15 @@ void action(App& app, int button, bool down, unsigned source) {
       return;
     }
     if (app.editUsed) return;
-    if (app.assignMode) app.assignMode = false;
+    if (app.assignMode) {
+      if (app.selectedAxisField == 2) adjustAxis(app, app.selectedAxis, 2, 1);
+    }
     else if (app.selection == 14) {
       if (!app.editWithSelect && !app.selectSources) recall(app);
       else if (app.preset < 4) app.status = "SELECT A USER SLOT";
       else app.status = savePreset(app, app.preset - 4) ? "PRESET SAVED" : "ERROR SAVING PRESET";
-    } else if (app.selection == 8 || app.selection == 10) adjust(app, app.selection, 1);
+    } else if (app.selection == 8 || app.selection == 10 || app.selection == 15)
+      adjust(app, app.selection, 1);
     return;
   }
   if (!down) return;
@@ -531,14 +774,13 @@ void action(App& app, int button, bool down, unsigned source) {
                          button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
   if (app.assignMode) {
     if (direction && app.heldButtons[SDL_CONTROLLER_BUTTON_A]) {
-      int& n = app.assignments[app.selectedAxis];
-      n = (n + ((button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT ||
-                 button == SDL_CONTROLLER_BUTTON_DPAD_UP) ? 1 : 7)) % 8;
-      app.status = saveAssignments(app) ? "AXES SAVED" : "ERROR SAVING AXES";
-    } else if (button == SDL_CONTROLLER_BUTTON_DPAD_UP && app.selectedAxis >= 2) app.selectedAxis -= 2;
-    else if (button == SDL_CONTROLLER_BUTTON_DPAD_DOWN && app.selectedAxis < 2) app.selectedAxis += 2;
-    else if (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT && app.selectedAxis % 2) --app.selectedAxis;
-    else if (button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT && app.selectedAxis % 2 == 0) ++app.selectedAxis;
+      const int step = button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT ||
+                       button == SDL_CONTROLLER_BUTTON_DPAD_UP ? 1 : -1;
+      adjustAxis(app, app.selectedAxis, app.selectedAxisField, step);
+    } else if (button == SDL_CONTROLLER_BUTTON_DPAD_UP && app.selectedAxis > 0) --app.selectedAxis;
+    else if (button == SDL_CONTROLLER_BUTTON_DPAD_DOWN && app.selectedAxis < axisCount - 1) ++app.selectedAxis;
+    else if (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT && app.selectedAxisField > 0) --app.selectedAxisField;
+    else if (button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT && app.selectedAxisField < 2) ++app.selectedAxisField;
     return;
   }
   if (direction) {
@@ -550,6 +792,8 @@ void action(App& app, int button, bool down, unsigned source) {
              magnitude : -magnitude);
     } else {
       app.selection = nextSelection(app.selection, button);
+      if (app.page == 0 && app.selection >= 3 && app.selection <= 6)
+        app.selectedInstrument = app.selection - 3;
     }
     return;
   }
@@ -560,6 +804,133 @@ void action(App& app, int button, bool down, unsigned source) {
       else app.status = savePreset(app, app.preset - 4) ? "PRESET SAVED" : "ERROR SAVING PRESET";
       break;
   }
+}
+
+bool inside(float x, float y, int left, int top, int w, int h) {
+  return x >= left && x < left + w && y >= top && y < top + h;
+}
+
+int pointerIndex(const App& app, bool mouse, SDL_TouchID device, SDL_FingerID finger) {
+  for (int i = 0; i < static_cast<int>(app.pointers.size()); ++i) {
+    const Pointer& pointer = app.pointers[i];
+    if (pointer.active && pointer.mouse == mouse &&
+        (mouse || (pointer.device == device && pointer.finger == finger))) return i;
+  }
+  return -1;
+}
+
+void pointerDown(App& app, bool mouse, SDL_TouchID device, SDL_FingerID finger, float x, float y) {
+  if (!std::isfinite(x) || !std::isfinite(y) || pointerIndex(app, mouse, device, finger) >= 0) return;
+  int slot = 0;
+  while (slot < static_cast<int>(app.pointers.size()) && app.pointers[slot].active) ++slot;
+  if (slot == static_cast<int>(app.pointers.size())) { app.status = "TOO MANY TOUCHES"; return; }
+  Pointer& pointer = app.pointers[slot];
+  pointer = Pointer{};
+  pointer.active = true;
+  pointer.mouse = mouse;
+  pointer.device = device;
+  pointer.finger = finger;
+  pointer.lastY = y;
+  const unsigned source = 1u << (slot + 2);
+
+  if (inside(x, y, 24, 32, 220, 28)) {
+    action(app, SDL_CONTROLLER_BUTTON_BACK, true, source);
+    action(app, SDL_CONTROLLER_BUTTON_BACK, false, source);
+  } else if (inside(x, y, 24, app.assignMode ? 442 : 414, 144, 24)) {
+    pointer.trigger = static_cast<int>((x - 24) / 36);
+    trigger(app, pointer.trigger, source, true);
+    return;
+  } else if (app.assignMode) {
+    for (int i = 0; i < axisCount; ++i) {
+      const int top = 105 + i * 58;
+      const int field = inside(x, y, 100, top, 248, 46) ? 0 :
+                        inside(x, y, 352, top, 120, 46) ? 1 :
+                        inside(x, y, 476, top, 144, 46) ? 2 : -1;
+      if (field >= 0) {
+        app.selectedAxis = i;
+        app.selectedAxisField = field;
+        if (field == 1) { pointer.axis = i; pointer.field = field; }
+        else adjustAxis(app, i, field, 1);
+        return;
+      }
+    }
+  } else if (app.page == 0) {
+    for (int i = 0; i < triggerCount; ++i) {
+      if (inside(x, y, 20 + i * 151, 69, 145, 57)) {
+        pointer.trigger = i;
+        trigger(app, i, source, true);
+        return;
+      }
+    }
+    for (int i = 0; i < 3; ++i) {
+      if (inside(x, y, 20 + i * 201, 137, 195, 153)) {
+        app.selection = i;
+        pointer.control = i;
+        return;
+      }
+    }
+    const int control = inside(x, y, 20, 301, 195, 58) ? 16 :
+                        inside(x, y, 221, 301, 195, 58) ? 7 :
+                        inside(x, y, 422, 301, 195, 58) ? 8 : -1;
+    if (control >= 0) { app.selection = control; adjust(app, control, 1); }
+  } else {
+    if (inside(x, y, 20, 80, 146, 202)) { app.selection = pointer.control = 9; return; }
+    for (int i = 0; i < 3; ++i) {
+      if (inside(x, y, 187 + i * 142, 103, 136, 130)) {
+        app.selection = pointer.control = 11 + i;
+        return;
+      }
+    }
+    if (inside(x, y, 187, 238, 420, 32)) { app.selection = 10; adjust(app, 10, 1); }
+    else if (inside(x, y, 20, 293, 368, 66)) {
+      app.selection = 14;
+      if (x < 100) adjust(app, 14, -1);
+      else if (x >= 320) adjust(app, 14, 1);
+      else recall(app);
+    } else if (inside(x, y, 398, 293, 222, 66)) {
+      app.selection = 15;
+      adjust(app, 15, 1);
+    }
+  }
+  if (!app.assignMode && inside(x, y, 240, 418, 120, 20)) panic(app);
+  else if (!app.assignMode && inside(x, y, 24, 440, 84, 20)) recall(app);
+  else if (!app.assignMode && inside(x, y, 120, 440, 90, 20)) {
+    if (app.preset < 4) app.status = "SELECT A USER SLOT";
+    else app.status = savePreset(app, app.preset - 4) ? "PRESET SAVED" : "ERROR SAVING PRESET";
+  }
+}
+
+void pointerMove(App& app, bool mouse, SDL_TouchID device, SDL_FingerID finger, float y) {
+  const int slot = pointerIndex(app, mouse, device, finger);
+  if (slot < 0 || !std::isfinite(y)) return;
+  Pointer& pointer = app.pointers[slot];
+  const float delta = pointer.lastY - y;
+  pointer.lastY = y;
+  if (pointer.control >= 0) {
+    const float scales[] = {2920.0f / 30.0f, 29.9f / 0.2f, 3.0f / 0.05f};
+    float steps = 0.0f;
+    if (pointer.control <= 2) steps = scales[pointer.control];
+    else if (pointer.control == 9) steps = 0.5f / 0.01f;
+    else if (pointer.control == 11) steps = 1.45f / 0.01f;
+    else if (pointer.control == 12) steps = 0.85f / 0.01f;
+    else if (pointer.control == 13) steps = 0.75f / 0.01f;
+    if (delta != 0.0f) adjust(app, pointer.control, delta * steps / 200.0f);
+  } else if (pointer.field == 1) {
+    pointer.remainder += delta / 10.0f;
+    const int steps = static_cast<int>(pointer.remainder);
+    if (steps) {
+      adjustAxis(app, pointer.axis, pointer.field, steps);
+      pointer.remainder -= steps;
+    }
+  }
+}
+
+void pointerUp(App& app, bool mouse, SDL_TouchID device, SDL_FingerID finger) {
+  const int slot = pointerIndex(app, mouse, device, finger);
+  if (slot < 0) return;
+  const int held = app.pointers[slot].trigger;
+  app.pointers[slot] = Pointer{};
+  if (held >= 0) trigger(app, held, 1u << (slot + 2), false);
 }
 
 int keyButton(SDL_Keycode key) {
@@ -588,14 +959,18 @@ void openController(App& app) {
     if (SDL_IsGameController(i) && (app.controller = SDL_GameControllerOpen(i))) return;
 }
 
+void applyAxis(App& app, int axis, float value, float dt) {
+  const int targets[] = {-1, 0, 1, 2};
+  if (std::fabs(value) > 0.2f && app.assignments[axis])
+    adjust(app, targets[app.assignments[axis]],
+           value * dt * 30.0f * app.axisRate[axis] / 100.0f * (app.axisInvert[axis] ? -1.0f : 1.0f));
+}
+
 void axes(App& app, float dt) {
   if (!app.controller || app.assignMode) return;
-  const int targets[] = {-1, 0, 1, 2, 9, 11, 12, 13};
   for (int i = 0; i < axisCount; ++i) {
     const int raw = SDL_GameControllerGetAxis(app.controller, static_cast<SDL_GameControllerAxis>(i));
-    const float v = raw / 32768.0f;
-    if (std::fabs(v) > 0.2f && app.assignments[i])
-      adjust(app, targets[app.assignments[i]], v * dt * 30.0f);
+    applyAxis(app, i, raw / 32768.0f, dt);
   }
 }
 }
@@ -613,6 +988,7 @@ int main(int argc, char** argv) {
   app.folder = pref;
   SDL_free(pref);
   loadAssignments(app);
+  loadTheme(app);
   app.window = SDL_CreateWindow("ChooChoo Dub Siren", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                 width, height, std::getenv("DUBSIREN_HANDHELD") ?
                                 SDL_WINDOW_FULLSCREEN_DESKTOP : SDL_WINDOW_RESIZABLE);
@@ -631,6 +1007,7 @@ int main(int argc, char** argv) {
       app.audio = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
   }
   if (!app.audio) { std::fprintf(stderr, "Audio initialization failed: %s\n", SDL_GetError()); SDL_Quit(); return 1; }
+  updateAudio(app);
   openController(app);
   SDL_PauseAudioDevice(app.audio, 0);
   Uint32 last = SDL_GetTicks();
@@ -639,6 +1016,24 @@ int main(int argc, char** argv) {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_QUIT) app.running = false;
+      else if (event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION ||
+               event.type == SDL_FINGERUP) {
+        const SDL_TouchFingerEvent& finger = event.tfinger;
+        if (finger.touchId == SDL_MOUSE_TOUCHID) continue;
+        if (event.type == SDL_FINGERDOWN)
+          pointerDown(app, false, finger.touchId, finger.fingerId, finger.x * width, finger.y * height);
+        else if (event.type == SDL_FINGERMOTION)
+          pointerMove(app, false, finger.touchId, finger.fingerId, finger.y * height);
+        else pointerUp(app, false, finger.touchId, finger.fingerId);
+      } else if (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) {
+        if (event.button.which == SDL_TOUCH_MOUSEID || event.button.button != SDL_BUTTON_LEFT) continue;
+        if (event.type == SDL_MOUSEBUTTONDOWN)
+          pointerDown(app, true, 0, 0, static_cast<float>(event.button.x), static_cast<float>(event.button.y));
+        else pointerUp(app, true, 0, 0);
+      } else if (event.type == SDL_MOUSEMOTION) {
+        if (event.motion.which != SDL_TOUCH_MOUSEID)
+          pointerMove(app, true, 0, 0, static_cast<float>(event.motion.y));
+      }
       else if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
         if (event.key.repeat) continue;
 #ifndef _WIN32
@@ -679,6 +1074,7 @@ int main(int argc, char** argv) {
         app.triggerBlocked = false;
         app.triggers.fill(0);
         app.heldButtons.fill(0);
+        app.pointers.fill(Pointer{});
         app.selectSources = 0;
       }
     }

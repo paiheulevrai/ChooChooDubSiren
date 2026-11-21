@@ -1,0 +1,10 @@
+#!/bin/sh
+GameName="ChooChooDubSiren"
+GameDir="ChooChooDubSiren"
+GameExecutable="launch.sh"
+GameDataFile="dubsiren"
+KillAudioserver=0
+PerformanceMode=0
+FullResolution=1
+Arguments=""
+/mnt/SDCARD/Emu/PORTS/launch_standalone.sh "$GameName" "$GameDir" "$GameExecutable" "$Arguments" "$GameDataFile" "$KillAudioserver" "$PerformanceMode"

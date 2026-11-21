@@ -26,8 +26,6 @@ bool Siren::valid(const SirenPatch& p) {
       inRange(p.depth, 0.0f, 3.0f) && inRange(p.volume, 0.0f, 0.5f) &&
       inRange(p.echoTime, 0.05f, 1.5f) && inRange(p.feedback, 0.0f, 0.85f) &&
       inRange(p.echoMix, 0.0f, 0.75f) && p.wave >= 0 && p.wave <= 6 &&
-      std::all_of(p.triggerWaves.begin(), p.triggerWaves.end(),
-                  [](int wave) { return wave >= 0 && wave <= 6; }) &&
       p.lfoWave >= 0 && p.lfoWave <= 4;
 }
 
@@ -41,8 +39,8 @@ bool Siren::setPatch(const SirenPatch& patch) {
   return true;
 }
 
-void Siren::setGate(bool down) {
-  if (down && !gate_ && patch_.retrig) lfoPhase_ = 0.0f;
+void Siren::setGate(bool down, bool retrigger) {
+  if (down && (!gate_ || retrigger) && patch_.retrig) lfoPhase_ = 0.0f;
   gate_ = down;
 }
 
