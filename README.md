@@ -126,6 +126,7 @@ The Android preview APK is signed with an automatically generated debug key,
 not a stable release key. Future builds may require uninstalling it before
 installation, which removes its private settings and presets.
 The Android GitHub Actions workflow builds the APK and tests it on an emulator.
+It can also attach the tested preview to an existing release when manually run.
 
 ## Connect safely
 

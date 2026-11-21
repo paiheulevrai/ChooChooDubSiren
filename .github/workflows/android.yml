@@ -2,6 +2,11 @@ name: Android
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release to receive the Android preview (optional)
+        required: false
+        type: string
   push:
     branches: [main]
   pull_request:
@@ -84,3 +89,29 @@ jobs:
           name: android-preview
           path: ${{ runner.temp }}/ChooChooDubSiren-Android-preview.apk
           if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+    needs: android
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-preview
+          path: release
+      - name: Add tested APK to existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]+$ ]]
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets > "$RUNNER_TEMP/release.json"
+          ! jq -e '.assets[] | select(.name == "ChooChooDubSiren-Android-preview.apk" or .name == "SHA256SUMS-Android.txt")' "$RUNNER_TEMP/release.json"
+          cd release
+          sha256sum ChooChooDubSiren-Android-preview.apk > SHA256SUMS-Android.txt
+          gh release upload "$RELEASE_TAG" ChooChooDubSiren-Android-preview.apk SHA256SUMS-Android.txt --repo "$GITHUB_REPOSITORY"
+          remote=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            --jq '.assets[] | select(.name == "ChooChooDubSiren-Android-preview.apk") | .digest')
+          test "$remote" = "sha256:$(cut -d' ' -f1 SHA256SUMS-Android.txt)"
