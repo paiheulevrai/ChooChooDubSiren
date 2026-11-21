@@ -8,7 +8,7 @@ sysroot="$MIYOO_TOOLCHAIN/arm-linux-gnueabihf/libc"
 output=build/miyooports
 app="$output/Roms/PORTS/Games/ChooChooDubSiren"
 shortcut="$output/Roms/PORTS/Shortcuts"
-mkdir -p "$app/libs" "$shortcut"
+mkdir -p "$app/libs" "$app/docs" "$shortcut"
 "$compiler" -std=c++17 -O2 -Wall -Wextra --sysroot="$sysroot" \
   -I"$MIYOO_SDL2_ROOT/include" -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard \
   src/main.cpp src/siren.cpp src/font12x16.cpp -L"$MIYOO_SDL2_ROOT/lib" \
@@ -19,6 +19,7 @@ cp "$MIYOO_SDL2_ROOT/lib/libSDL2-2.0.so.0" "$MIYOO_SDL2_ROOT/lib/libneonarmmiyoo
 cp "$MIYOO_SDL2_ROOT/COPYING.txt" "$app/libs/SDL2-COPYING.txt"
 cp "$MIYOO_SDL2_ROOT/MIYOO-LICENSE.txt" "$app/libs/MIYOO-LICENSE.txt"
 cp packaging/miyooports/launch.sh README.md LICENSE.tracker "$app/"
+cp docs/*.png "$app/docs/"
 cp packaging/miyooports/ChooChooDubSiren.port "$shortcut/"
 chmod +x "$app/dubsiren" "$app/launch.sh" "$shortcut/ChooChooDubSiren.port"
 rm -f build/ChooChooDubSiren-MiyooPorts.zip

@@ -24,22 +24,22 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
-          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-SDL2
+          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-SDL2 zip
       - name: Test and package
-        shell: pwsh
+        shell: msys2 {0}
         run: |
-          $env:PATH = "C:\msys64\ucrt64\bin;C:\msys64\usr\bin;$env:PATH"
-          $env:SDL_AUDIODRIVER = 'dummy'
-          & C:\msys64\ucrt64\bin\g++.exe -std=c++17 -Wall -Wextra -O2 -IC:\msys64\ucrt64\include tests\app_test.cpp src\siren.cpp src\font12x16.cpp -LC:\msys64\ucrt64\lib -lSDL2 -o app-test.exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & .\app-test.exe "$env:RUNNER_TEMP\app-test-data"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & .\scripts\build-windows.ps1
-          $env:SDL_VIDEODRIVER = 'dummy'
-          $env:APPDATA = $env:RUNNER_TEMP
-          & .\build\windows-release\DubSiren.exe --smoke "$env:RUNNER_TEMP\smoke.bmp"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Compress-Archive -Path .\build\windows-release\* -DestinationPath .\build\ChooChooDubSiren-Windows.zip
+          export SDL_AUDIODRIVER=dummy
+          g++ -std=c++17 -Wall -Wextra -O2 tests/app_test.cpp src/siren.cpp src/font12x16.cpp -lSDL2 -o app-test.exe
+          ./app-test.exe "$RUNNER_TEMP/app-test-data"
+          mkdir -p build/windows-release/docs
+          g++ -std=c++17 -Wall -Wextra -O2 src/main.cpp src/siren.cpp src/font12x16.cpp -lSDL2 \
+            -static-libgcc -static-libstdc++ -o build/windows-release/DubSiren.exe
+          cp /ucrt64/bin/SDL2.dll /ucrt64/bin/libwinpthread-1.dll README.md LICENSE.tracker build/windows-release/
+          cp docs/*.png build/windows-release/docs/
+          export SDL_VIDEODRIVER=dummy APPDATA="$RUNNER_TEMP"
+          ./build/windows-release/DubSiren.exe --smoke "$RUNNER_TEMP/smoke.bmp"
+          cd build/windows-release
+          zip -qr ../ChooChooDubSiren-Windows.zip .
       - uses: actions/upload-artifact@v4
         with:
           name: windows

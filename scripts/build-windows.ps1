@@ -16,6 +16,8 @@ try {
   Copy-Item (Join-Path $runtime 'SDL2.dll') $out
   Copy-Item (Join-Path $runtime 'libwinpthread-1.dll') $out
   Copy-Item 'README.md', 'LICENSE.tracker' $out
+  New-Item -ItemType Directory -Force (Join-Path $out 'docs') | Out-Null
+  Copy-Item 'docs\*.png' (Join-Path $out 'docs')
   Write-Host "Created $(Join-Path $out 'DubSiren.exe')"
 } finally {
   Pop-Location
