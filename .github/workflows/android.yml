@@ -50,8 +50,8 @@ jobs:
           project="$RUNNER_TEMP/ccsiren-android"
           cd "$project"
           ./gradlew --no-daemon --console=plain assembleRelease
-          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/ChooChooDubSiren-Android-preview.apk"
-          apk="$RUNNER_TEMP/ChooChooDubSiren-Android-preview.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/ChooChooDubSiren-Android-touch-preview.apk"
+          apk="$RUNNER_TEMP/ChooChooDubSiren-Android-touch-preview.apk"
           "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose "$apk"
           unzip -Z1 "$apk" > "$RUNNER_TEMP/android-apk-files.txt"
           for abi in armeabi-v7a arm64-v8a x86_64; do
@@ -73,17 +73,25 @@ jobs:
           arch: x86_64
           disable-animations: true
           script: |
-            adb install "$RUNNER_TEMP/ChooChooDubSiren-Android-preview.apk"
+            adb install "$RUNNER_TEMP/ChooChooDubSiren-Android-touch-preview.apk"
             adb shell am start -n com.paiheulevrai.choochoodubsiren/org.libsdl.app.SDLActivity
             sleep 15
             adb shell pidof com.paiheulevrai.choochoodubsiren
             adb exec-out screencap -p > "$RUNNER_TEMP/android-before.png"
-            python3 packaging/android/tap-header.py "$RUNNER_TEMP/android-before.png"
+            python3 packaging/android/tap-header.py "$RUNNER_TEMP/android-before.png" common
             sleep 2
             adb shell pidof com.paiheulevrai.choochoodubsiren
-            adb exec-out screencap -p > "$RUNNER_TEMP/android-after.png"
+            adb exec-out screencap -p > "$RUNNER_TEMP/android-common.png"
+            python3 packaging/android/tap-header.py "$RUNNER_TEMP/android-common.png" sticks
+            sleep 2
+            adb exec-out screencap -p > "$RUNNER_TEMP/android-sticks.png"
+            python3 packaging/android/tap-header.py "$RUNNER_TEMP/android-sticks.png" instrument
+            sleep 2
+            adb exec-out screencap -p > "$RUNNER_TEMP/android-instrument.png"
             adb logcat -d -s SDL:V AndroidRuntime:E > "$RUNNER_TEMP/android-logcat.txt"
-            ! cmp -s "$RUNNER_TEMP/android-before.png" "$RUNNER_TEMP/android-after.png"
+            ! cmp -s "$RUNNER_TEMP/android-before.png" "$RUNNER_TEMP/android-common.png"
+            ! cmp -s "$RUNNER_TEMP/android-common.png" "$RUNNER_TEMP/android-sticks.png"
+            ! cmp -s "$RUNNER_TEMP/android-sticks.png" "$RUNNER_TEMP/android-instrument.png"
             grep -q 'Running main function SDL_main' "$RUNNER_TEMP/android-logcat.txt"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -91,13 +99,15 @@ jobs:
           name: android-test-diagnostics
           path: |
             ${{ runner.temp }}/android-before.png
-            ${{ runner.temp }}/android-after.png
+            ${{ runner.temp }}/android-common.png
+            ${{ runner.temp }}/android-sticks.png
+            ${{ runner.temp }}/android-instrument.png
             ${{ runner.temp }}/android-logcat.txt
           if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
           name: android-preview
-          path: ${{ runner.temp }}/ChooChooDubSiren-Android-preview.apk
+          path: ${{ runner.temp }}/ChooChooDubSiren-Android-touch-preview.apk
           if-no-files-found: error
 
   publish:
@@ -118,10 +128,10 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._-]+$ ]]
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets > "$RUNNER_TEMP/release.json"
-          ! jq -e '.assets[] | select(.name == "ChooChooDubSiren-Android-preview.apk" or .name == "SHA256SUMS-Android.txt")' "$RUNNER_TEMP/release.json"
+          ! jq -e '.assets[] | select(.name == "ChooChooDubSiren-Android-touch-preview.apk" or .name == "SHA256SUMS-Android-touch.txt")' "$RUNNER_TEMP/release.json"
           cd release
-          sha256sum ChooChooDubSiren-Android-preview.apk > SHA256SUMS-Android.txt
-          gh release upload "$RELEASE_TAG" ChooChooDubSiren-Android-preview.apk SHA256SUMS-Android.txt --repo "$GITHUB_REPOSITORY"
+          sha256sum ChooChooDubSiren-Android-touch-preview.apk > SHA256SUMS-Android-touch.txt
+          gh release upload "$RELEASE_TAG" ChooChooDubSiren-Android-touch-preview.apk SHA256SUMS-Android-touch.txt --repo "$GITHUB_REPOSITORY"
           remote=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
-            --jq '.assets[] | select(.name == "ChooChooDubSiren-Android-preview.apk") | .digest')
-          test "$remote" = "sha256:$(cut -d' ' -f1 SHA256SUMS-Android.txt)"
+            --jq '.assets[] | select(.name == "ChooChooDubSiren-Android-touch-preview.apk") | .digest')
+          test "$remote" = "sha256:$(cut -d' ' -f1 SHA256SUMS-Android-touch.txt)"

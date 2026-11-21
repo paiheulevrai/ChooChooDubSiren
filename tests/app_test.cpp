@@ -468,6 +468,46 @@ int main(int argc, char** argv) {
   pointerUp(touch, false, 2, 21);
   assert(!touch.gateSources);
 
+  App mobile;
+  mobile.touchUi = true;
+  mobile.audio = app.audio;
+  mobile.folder = folder;
+  const auto tap = [&](int id, float x, float y) {
+    pointerDown(mobile, false, 3, id, x, y);
+    pointerUp(mobile, false, 3, id);
+  };
+  tap(1, 200, 46);
+  assert(mobile.page == 1 && !mobile.assignMode && mobile.selection == 9);
+  pointerDown(mobile, false, 3, 2, 100, 420);
+  assert(mobile.activeTrigger == 1);
+  tap(3, 360, 46);
+  assert(mobile.assignMode && mobile.activeTrigger == 1);
+  pointerUp(mobile, false, 3, 2);
+  assert(!mobile.gateSources);
+  const bool mobileInverted = mobile.axisInvert[0];
+  tap(4, 500, 120);
+  assert(mobile.axisInvert[0] != mobileInverted);
+  tap(5, 40, 46);
+  assert(mobile.page == 0 && !mobile.assignMode && mobile.selectedInstrument == 1);
+  tap(6, 40, 46);
+  assert(mobile.selection == 4);
+  tap(7, 200, 46);
+  tap(8, 360, 330);
+  assert(mobile.preset == 1);
+  mobile.preset = 4;
+  const float savedPitch = mobile.patch.instruments[0].pitch;
+  tap(9, 500, 445);
+  assert(mobile.status == "PRESET SAVED");
+  mobile.patch.instruments[0].pitch = 1234;
+  tap(10, 330, 445);
+  assert(mobile.status == "PRESET LOADED" && mobile.patch.instruments[0].pitch == savedPitch);
+  pointerDown(mobile, false, 3, 11, 40, 420);
+  tap(12, 330, 410);
+  assert(!mobile.gateSources && mobile.status == "PANIC: AUDIO STOPPED");
+  pointerUp(mobile, false, 3, 11);
+  tap(13, 500, 410);
+  assert(!mobile.running);
+
   assert(keyButton(SDLK_w) == leftTrigger && keyButton(SDLK_e) == rightTrigger);
   triggerAxis(app, 1, 16001);
   assert(app.activeTrigger == 1);

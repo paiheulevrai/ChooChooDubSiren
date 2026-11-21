@@ -106,6 +106,16 @@ left/right.
 
 Game controllers are supported on Windows (tested: DualSense)
 
+### Android touch controls
+
+Tap **INST**, **COMMON** or **STICKS** at the top to switch screens directly.
+Hold any **L1–R2** pad to play from every screen; drag knobs and stick rates
+up or down, and tap the other settings to change them. On Common, tap the
+preset arrows to select a slot or the preset name to load it.
+
+The bottom buttons provide **PANIC**, **EXIT**, **LOAD** and **SAVE** without a
+gamepad. Save to a user slot; release all held pads before loading a preset.
+
 ## Install
 
 Download the appropriate archive from the
@@ -117,7 +127,7 @@ Download the appropriate archive from the
 | **PortMaster** | Copy `ChooChooDubSiren.sh` and the `choochoodubsiren` folder into your console's `ports` directory. Launch from **Ports**. |
 | **Miyoo Mini / Mini Plus with OnionOS** | Extract the MiyooPorts archive to the SD card root and launch **ChooChooDubSiren** from Ports. |
 | **NextUI** | Install the Pak contents in `Tools/tg5040/ChooChooDubSiren.pak` on the SD card. |
-| **Android** | Install the Android preview APK on Android 8.0 or later, allowing installation from your chosen source if prompted. The app runs in landscape and supports touch. |
+| **Android** | Install `ChooChooDubSiren-Android-touch-preview.apk` on Android 8.0 or later, allowing installation from your chosen source if prompted. The app runs in landscape and supports touch. |
 
 Compatibility and latency vary by hardware and firmware; test your own setup
 before playing live.

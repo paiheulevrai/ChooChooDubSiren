@@ -117,6 +117,11 @@ struct App {
   bool triggerBlocked = false;
   bool running = true;
   bool assignMode = false;
+#ifdef __ANDROID__
+  bool touchUi = true;
+#else
+  bool touchUi = false;
+#endif
   bool editUsed = false;
   bool editWithSelect = false;
   bool selectUsed = false;
@@ -572,9 +577,20 @@ void draw(App& app) {
   rect(r, 12, 12, 616, 48, p.face);
   text(r, 24, 19, "CHOOCHOO DUB SIREN", p.label.r > 128 ? p.label : SDL_Color{230, 230, 220, 255});
   const SDL_Color headerAccent = rastaGold;
-  text(r, 24, 39, app.assignMode ? "03 STICKS" : (app.page == 0 ? "01 INSTRUMENT" : "02 COMMON"),
-       headerAccent);
-  text(r, 408, 39, std::string("PART ") + triggerNames[app.selectedInstrument], headerAccent);
+  if (app.touchUi) {
+    const char* names[] = {"INST", "COMMON", "STICKS"};
+    const int active = app.assignMode ? 2 : app.page;
+    for (int i = 0; i < 3; ++i) {
+      const int x = 20 + i * 158;
+      panel(r, x, 34, 150, 25, i == active, p);
+      centeredText(r, x + 75, 38, names[i], p.label);
+    }
+    text(r, 510, 39, std::string("PART ") + triggerNames[app.selectedInstrument], headerAccent);
+  } else {
+    text(r, 24, 39, app.assignMode ? "03 STICKS" : (app.page == 0 ? "01 INSTRUMENT" : "02 COMMON"),
+         headerAccent);
+    text(r, 408, 39, std::string("PART ") + triggerNames[app.selectedInstrument], headerAccent);
+  }
   const int peak = app.peak.load(std::memory_order_relaxed);
   for (int i = 0; i < 16; ++i)
     rect(r, 444 + i * 8, 24, 5, 6, peak * 16 / 32768 > i ? headerAccent : p.muted);
@@ -598,7 +614,7 @@ void draw(App& app) {
       panel(r, 476, y, 144, 46, app.selectedAxis == i && app.selectedAxisField == 2, p);
       text(r, 492, y + 15, app.axisInvert[i] ? "ON" : "OFF", p.accent);
     }
-    centeredText(r, 320, 346, "DPAD SELECT  A+DPAD EDIT", p.label);
+    centeredText(r, 320, 346, app.touchUi ? "TAP OR DRAG TO EDIT" : "DPAD SELECT  A+DPAD EDIT", p.label);
   } else if (app.page == 0) {
     for (int i = 0; i < triggerCount; ++i) {
       const int x = 20 + i * 151;
@@ -661,7 +677,19 @@ void draw(App& app) {
   }
 
   text(r, 24, 372, app.status, p.accent);
-  if (app.assignMode) {
+  if (app.touchUi) {
+    for (int i = 0; i < triggerCount; ++i) {
+      const int x = 20 + i * 70;
+      panel(r, x, 396, 65, 64, app.triggers[i] != 0, p);
+      centeredText(r, x + 32, 420, triggerNames[i], p.label);
+    }
+    const char* names[] = {"PANIC", "EXIT", "LOAD", "SAVE"};
+    for (int i = 0; i < 4; ++i) {
+      const int x = 305 + (i % 2) * 157, y = 396 + (i / 2) * 34;
+      panel(r, x, y, 150, 30, false, p);
+      centeredText(r, x + 75, y + 7, names[i], p.label);
+    }
+  } else if (app.assignMode) {
     text(r, 24, 402, "SELECT PAGE  B/START BACK  SELECT+B PANIC", p.label);
     text(r, 24, 424, "A TOGGLE INVERT", p.label);
     text(r, 24, 446, "L1 L2 R1 R2 PLAY", p.label);
@@ -700,6 +728,21 @@ void adjustAxis(App& app, int axis, int field, int step) {
   app.status = saveAssignments(app) ? "AXES SAVED" : "ERROR SAVING AXES";
 }
 
+void selectScreen(App& app, int screen) {
+  if (screen == 2) {
+    app.assignMode = true;
+  } else {
+    app.assignMode = false;
+    app.page = screen;
+    app.selection = screen == 0 ? 3 + app.selectedInstrument : 9;
+  }
+}
+
+void saveSelectedPreset(App& app) {
+  if (app.preset < 4) app.status = "SELECT A USER SLOT";
+  else app.status = savePreset(app, app.preset - 4) ? "PRESET SAVED" : "ERROR SAVING PRESET";
+}
+
 void action(App& app, int button, bool down, unsigned source) {
   if (down && button != SDL_CONTROLLER_BUTTON_A && button != SDL_CONTROLLER_BUTTON_BACK &&
       app.heldButtons[SDL_CONTROLLER_BUTTON_A]) app.editUsed = true;
@@ -724,16 +767,7 @@ void action(App& app, int button, bool down, unsigned source) {
                        app.heldButtons[SDL_CONTROLLER_BUTTON_START];
       if (app.heldButtons[SDL_CONTROLLER_BUTTON_A]) app.editWithSelect = true;
     } else if (!app.selectUsed) {
-      if (app.assignMode) {
-        app.assignMode = false;
-        app.page = 0;
-        app.selection = 3 + app.selectedInstrument;
-      } else if (app.page == 0) {
-        app.page = 1;
-        app.selection = 9;
-      } else {
-        app.assignMode = true;
-      }
+      selectScreen(app, app.assignMode ? 0 : (app.page == 0 ? 1 : 2));
     }
     return;
   }
@@ -753,8 +787,7 @@ void action(App& app, int button, bool down, unsigned source) {
     }
     else if (app.selection == 14) {
       if (!app.editWithSelect && !app.selectSources) recall(app);
-      else if (app.preset < 4) app.status = "SELECT A USER SLOT";
-      else app.status = savePreset(app, app.preset - 4) ? "PRESET SAVED" : "ERROR SAVING PRESET";
+      else saveSelectedPreset(app);
     } else if (app.selection == 8 || app.selection == 10 || app.selection == 15)
       adjust(app, app.selection, 1);
     return;
@@ -801,10 +834,7 @@ void action(App& app, int button, bool down, unsigned source) {
   }
   switch (button) {
     case SDL_CONTROLLER_BUTTON_X: recall(app); break;
-    case SDL_CONTROLLER_BUTTON_Y:
-      if (app.preset < 4) app.status = "SELECT A USER SLOT";
-      else app.status = savePreset(app, app.preset - 4) ? "PRESET SAVED" : "ERROR SAVING PRESET";
-      break;
+    case SDL_CONTROLLER_BUTTON_Y: saveSelectedPreset(app); break;
   }
 }
 
@@ -835,10 +865,32 @@ void pointerDown(App& app, bool mouse, SDL_TouchID device, SDL_FingerID finger, 
   pointer.lastY = y;
   const unsigned source = 1u << (slot + 2);
 
-  if (inside(x, y, 24, 32, 220, 28)) {
+  if (app.touchUi && inside(x, y, 20, 34, 466, 25)) {
+    const int screen = static_cast<int>((x - 20) / 158);
+    if (screen < 3 && inside(x, y, 20 + screen * 158, 34, 150, 25) &&
+        screen != (app.assignMode ? 2 : app.page)) selectScreen(app, screen);
+    return;
+  } else if (app.touchUi && inside(x, y, 20, 396, 275, 64)) {
+    const int index = static_cast<int>((x - 20) / 70);
+    if (index < triggerCount && inside(x, y, 20 + index * 70, 396, 65, 64)) {
+      pointer.trigger = index;
+      trigger(app, index, source, true);
+    }
+    return;
+  } else if (app.touchUi && inside(x, y, 305, 396, 307, 64)) {
+    const int col = static_cast<int>((x - 305) / 157);
+    const int row = static_cast<int>((y - 396) / 34);
+    if (col < 2 && row < 2 && inside(x, y, 305 + col * 157, 396 + row * 34, 150, 30)) {
+      if (row == 0 && col == 0) panic(app);
+      else if (row == 0) app.running = false;
+      else if (col == 0) recall(app);
+      else saveSelectedPreset(app);
+    }
+    return;
+  } else if (!app.touchUi && inside(x, y, 24, 32, 220, 28)) {
     action(app, SDL_CONTROLLER_BUTTON_BACK, true, source);
     action(app, SDL_CONTROLLER_BUTTON_BACK, false, source);
-  } else if (inside(x, y, 24, app.assignMode ? 442 : 414, 144, 24)) {
+  } else if (!app.touchUi && inside(x, y, 24, app.assignMode ? 442 : 414, 144, 24)) {
     pointer.trigger = static_cast<int>((x - 24) / 36);
     trigger(app, pointer.trigger, source, true);
     return;
@@ -894,12 +946,10 @@ void pointerDown(App& app, bool mouse, SDL_TouchID device, SDL_FingerID finger, 
       adjust(app, 15, 1);
     }
   }
-  if (!app.assignMode && inside(x, y, 240, 418, 120, 20)) panic(app);
-  else if (!app.assignMode && inside(x, y, 24, 440, 84, 20)) recall(app);
-  else if (!app.assignMode && inside(x, y, 120, 440, 90, 20)) {
-    if (app.preset < 4) app.status = "SELECT A USER SLOT";
-    else app.status = savePreset(app, app.preset - 4) ? "PRESET SAVED" : "ERROR SAVING PRESET";
-  }
+  if (!app.touchUi && !app.assignMode && inside(x, y, 240, 418, 120, 20)) panic(app);
+  else if (!app.touchUi && !app.assignMode && inside(x, y, 24, 440, 84, 20)) recall(app);
+  else if (!app.touchUi && !app.assignMode && inside(x, y, 120, 440, 90, 20))
+    saveSelectedPreset(app);
 }
 
 void pointerMove(App& app, bool mouse, SDL_TouchID device, SDL_FingerID finger, float y) {
@@ -991,8 +1041,11 @@ int main(int argc, char** argv) {
   SDL_free(pref);
   loadAssignments(app);
   loadTheme(app);
+#ifdef __ANDROID__
+  SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+#endif
   app.window = SDL_CreateWindow("ChooChoo Dub Siren", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                width, height, std::getenv("DUBSIREN_HANDHELD") ?
+                                width, height, (app.touchUi || std::getenv("DUBSIREN_HANDHELD")) ?
                                 SDL_WINDOW_FULLSCREEN_DESKTOP : SDL_WINDOW_RESIZABLE);
   if (app.window) app.renderer = SDL_CreateRenderer(app.window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
   if (app.window && !app.renderer) app.renderer = SDL_CreateRenderer(app.window, -1, SDL_RENDERER_SOFTWARE);
