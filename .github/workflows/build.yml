@@ -2,6 +2,15 @@ name: Build packages
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: New release tag (leave empty for build only)
+        required: false
+        type: string
+      android_run_id:
+        description: Successful Android workflow run for this exact commit
+        required: false
+        type: string
   push:
     branches: [main]
   pull_request:
@@ -29,12 +38,13 @@ jobs:
         shell: msys2 {0}
         run: |
           export SDL_AUDIODRIVER=dummy
-          g++ -std=c++17 -Wall -Wextra -O2 tests/app_test.cpp src/siren.cpp src/font12x16.cpp -lSDL2 -o app-test.exe
+          g++ -std=c++17 -Wall -Wextra -O2 tests/app_test.cpp src/siren.cpp src/fonts16x24.cpp -lSDL2 -o app-test.exe
           ./app-test.exe "$RUNNER_TEMP/app-test-data"
           mkdir -p build/windows-release/docs
-          g++ -std=c++17 -Wall -Wextra -O2 src/main.cpp src/siren.cpp src/font12x16.cpp -lSDL2 \
+          g++ -std=c++17 -Wall -Wextra -O2 src/main.cpp src/siren.cpp src/fonts16x24.cpp -lSDL2 \
             -static-libgcc -static-libstdc++ -o build/windows-release/DubSiren.exe
           cp /ucrt64/bin/SDL2.dll /ucrt64/bin/libwinpthread-1.dll README.md LICENSE.tracker build/windows-release/
+          cp -R licenses build/windows-release/
           cp docs/*.png build/windows-release/docs/
           export SDL_VIDEODRIVER=dummy APPDATA="$RUNNER_TEMP"
           ./build/windows-release/DubSiren.exe --smoke "$RUNNER_TEMP/smoke.bmp"
@@ -124,3 +134,44 @@ jobs:
           name: miyoo
           path: build/ChooChooDubSiren-MiyooPorts.zip
           if-no-files-found: error
+
+  release:
+    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+    needs: [linux, windows, arm64, miyoo]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Publish tested builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          ANDROID_RUN: ${{ inputs.android_run_id }}
+        run: |
+          set -eu
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$ANDROID_RUN" =~ ^[0-9]+$ ]]
+          gh run view "$ANDROID_RUN" --repo "$GITHUB_REPOSITORY" --json headSha,status,conclusion,workflowName \
+            | jq -e --arg sha "$GITHUB_SHA" '.headSha == $sha and .status == "completed" and .conclusion == "success" and .workflowName == "Android"'
+          gh run download "$ANDROID_RUN" --repo "$GITHUB_REPOSITORY" -n android-preview -D release
+          cd release
+          sha256sum ChooChooDubSiren-Windows.zip choochoodubsiren.zip ChooChooDubSiren-MiyooPorts.zip \
+            ChooChooDubSiren.pak.zip ChooChooDubSiren-Android-touch-preview.apk > SHA256SUMS.txt
+          cat > notes.txt <<EOF
+          ## ChooChoo Dub Siren $RELEASE_TAG
+
+          - Native 16x24 text and nine selectable fonts in COMMON, saved between sessions.
+          - Windows, PortMaster, MiyooPorts and NextUI Pak builds; Android touch preview.
+          - Built and tested from commit \`$GITHUB_SHA\`.
+
+          Android is signed with a temporary debug key. Upgrading may require uninstalling the previous APK, which deletes its private settings and presets. Android hardware and audio latency have not been tested.
+          EOF
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "ChooChoo Dub Siren $RELEASE_TAG" --notes-file notes.txt \
+            ChooChooDubSiren-Windows.zip choochoodubsiren.zip ChooChooDubSiren-MiyooPorts.zip \
+            ChooChooDubSiren.pak.zip ChooChooDubSiren-Android-touch-preview.apk SHA256SUMS.txt

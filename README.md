@@ -53,9 +53,9 @@ Play or select one of the four pads, then shape that voice:
 | ![Common screen in Day Rastafari](docs/common-day.png) | ![Common screen in Night Rastafari](docs/common-night.png) |
 
 Set **MASTER VOLUME** and the shared delay's **TIME**, **FEEDBACK**, **MIX**
-and **ECHO** send. C
-
-oose a **PRESET** or switch the **THEME** here.
+and **ECHO** send. Choose a **PRESET**, switch the **THEME**, or choose a
+**FONT** here. The nine 16×24 fonts include the default and Console, Elektron,
+IBM VGA, Camcorder, PSGCapital, C64, Segment and Roboto; the choice is saved.
 
 Four distinct factory presets — **Dub, Reggae, Stepper and Dancehall** — each
 provide four voices and shared settings. Four additional user slots can store
@@ -82,6 +82,7 @@ A dead zone helps prevent accidental adjustments.
 | Select | Next screen |
 | Hold A + D-pad | Change the focused setting |
 | A on RETRIG, ECHO, THEME or stick INVERT | Toggle |
+| A on FONT | Next font (hold A + D-pad for either direction) |
 | A on PRESET or X | Load the selected preset |
 | Y | Save the selected user preset |
 | Select + A on PRESET | Save the selected user preset |
@@ -111,7 +112,8 @@ Game controllers are supported on Windows (tested: DualSense)
 Tap **INST**, **COMMON** or **STICKS** at the top to switch screens directly.
 Hold any **L1–R2** pad to play from every screen; drag knobs and stick rates
 up or down, and tap the other settings to change them. On Common, tap the
-preset arrows to select a slot or the preset name to load it.
+preset arrows to select a slot or the preset name to load it. Tap FONT to
+cycle forward; tap its left edge to cycle backward.
 
 The bottom buttons provide **PANIC**, **EXIT**, **LOAD** and **SAVE** without a
 gamepad. Save to a user slot; release all held pads before loading a preset.
@@ -152,9 +154,10 @@ Sound test before sending kilowatts of this onto a crowd of innocent people.
 ## Credits
 
 Inspired by dub siren instruments and sound-system culture. The tape-style
-echo draws on ChooChooTracker's Tape Echo; the bundled pixel font is also
+echo draws on ChooChooTracker's Tape Echo; the bundled pixel fonts are also
 from [ChooChooTracker](https://github.com/paiheulevrai/Choochootracker).
-See `LICENSE.tracker` for the upstream MIT license.
+See `licenses/fonts/README.txt` for font credits and individual licenses, and
+`LICENSE.tracker` for the upstream MIT license.
 
 The Miyoo package uses the modified
 [SDL2 Miyoo sources](https://github.com/Rparadise-Team/sdl2_miyoo_new) and

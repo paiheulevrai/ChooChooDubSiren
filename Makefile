@@ -9,17 +9,17 @@ BUILD ?= build/linux
 .PHONY: all test
 all: $(BUILD)/dubsiren
 
-$(BUILD)/dubsiren: src/main.cpp src/siren.cpp src/siren.h src/font12x16.cpp
+$(BUILD)/dubsiren: src/main.cpp src/siren.cpp src/siren.h src/fonts16x24.cpp
 	mkdir -p $(BUILD)
-	$(CXX) $(CXXFLAGS) $(SDL_CFLAGS) src/main.cpp src/siren.cpp src/font12x16.cpp $(LDFLAGS) $(SDL_LIBS) -o $@
+	$(CXX) $(CXXFLAGS) $(SDL_CFLAGS) src/main.cpp src/siren.cpp src/fonts16x24.cpp $(LDFLAGS) $(SDL_LIBS) -o $@
 
 $(BUILD)/siren-test: tests/siren_test.cpp src/siren.cpp src/siren.h
 	mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) tests/siren_test.cpp src/siren.cpp -o $@
 
-$(BUILD)/app-test: tests/app_test.cpp src/main.cpp src/siren.cpp src/siren.h src/font12x16.cpp
+$(BUILD)/app-test: tests/app_test.cpp src/main.cpp src/siren.cpp src/siren.h src/fonts16x24.cpp
 	mkdir -p $(BUILD)
-	$(CXX) $(CXXFLAGS) $(SDL_CFLAGS) tests/app_test.cpp src/siren.cpp src/font12x16.cpp $(SDL_LIBS) -o $@
+	$(CXX) $(CXXFLAGS) $(SDL_CFLAGS) tests/app_test.cpp src/siren.cpp src/fonts16x24.cpp $(SDL_LIBS) -o $@
 
 test: $(BUILD)/siren-test $(BUILD)/app-test
 	$(BUILD)/siren-test

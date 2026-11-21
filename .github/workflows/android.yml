@@ -40,11 +40,14 @@ jobs:
           ln -s "$sdl" "$project/app/jni/SDL"
           mkdir -p "$project/app/jni/src/include/SDL2"
           cp "$sdl"/include/*.h "$project/app/jni/src/include/SDL2/"
-          cp src/main.cpp src/siren.cpp src/siren.h src/font12x16.cpp "$project/app/jni/src/"
+          cp src/main.cpp src/siren.cpp src/siren.h src/fonts16x24.cpp "$project/app/jni/src/"
           cp packaging/android/Android.mk "$project/app/jni/src/Android.mk"
           cp packaging/android/Application.mk "$project/app/jni/Application.mk"
           cp packaging/android/build.gradle "$project/app/build.gradle"
           cp packaging/android/AndroidManifest.xml "$project/app/src/main/AndroidManifest.xml"
+          mkdir -p "$project/app/src/main/assets"
+          cp -R licenses "$project/app/src/main/assets/"
+          cp LICENSE.tracker "$project/app/src/main/assets/"
       - name: Build and verify APK
         run: |
           project="$RUNNER_TEMP/ccsiren-android"
@@ -82,7 +85,10 @@ jobs:
             sleep 2
             adb shell pidof com.paiheulevrai.choochoodubsiren
             adb exec-out screencap -p > "$RUNNER_TEMP/android-common.png"
-            python3 packaging/android/tap-header.py "$RUNNER_TEMP/android-common.png" sticks
+            python3 packaging/android/tap-header.py "$RUNNER_TEMP/android-common.png" font
+            sleep 2
+            adb exec-out screencap -p > "$RUNNER_TEMP/android-font.png"
+            python3 packaging/android/tap-header.py "$RUNNER_TEMP/android-font.png" sticks
             sleep 2
             adb exec-out screencap -p > "$RUNNER_TEMP/android-sticks.png"
             python3 packaging/android/tap-header.py "$RUNNER_TEMP/android-sticks.png" instrument
@@ -91,6 +97,7 @@ jobs:
             python3 packaging/android/tap-header.py "$RUNNER_TEMP/android-instrument.png" pad "$RUNNER_TEMP/android-pad.png"
             adb logcat -d -s SDL:V AndroidRuntime:E > "$RUNNER_TEMP/android-logcat.txt"
             ! cmp -s "$RUNNER_TEMP/android-before.png" "$RUNNER_TEMP/android-common.png"
+            ! cmp -s "$RUNNER_TEMP/android-common.png" "$RUNNER_TEMP/android-font.png"
             ! cmp -s "$RUNNER_TEMP/android-common.png" "$RUNNER_TEMP/android-sticks.png"
             ! cmp -s "$RUNNER_TEMP/android-sticks.png" "$RUNNER_TEMP/android-instrument.png"
             ! cmp -s "$RUNNER_TEMP/android-instrument.png" "$RUNNER_TEMP/android-pad.png"
@@ -102,6 +109,7 @@ jobs:
           path: |
             ${{ runner.temp }}/android-before.png
             ${{ runner.temp }}/android-common.png
+            ${{ runner.temp }}/android-font.png
             ${{ runner.temp }}/android-sticks.png
             ${{ runner.temp }}/android-instrument.png
             ${{ runner.temp }}/android-pad.png

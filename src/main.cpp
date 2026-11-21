@@ -27,11 +27,11 @@
 #include <unistd.h>
 #endif
 
-extern "C" const uint8_t font12x16[];
+extern const uint8_t fonts16x24[9][95 * 48];
 
 namespace {
 constexpr int width = 640, height = 480;
-constexpr int parameterCount = 17, axisCount = 4, triggerCount = 4;
+constexpr int parameterCount = 18, axisCount = 4, triggerCount = 4;
 constexpr int leftTrigger = SDL_CONTROLLER_BUTTON_MAX;
 constexpr int rightTrigger = SDL_CONTROLLER_BUTTON_MAX + 1;
 const char* waves[] = {"SINE", "TRIANGLE", "SQUARE", "SAW UP", "SAW DOWN", "PULSE", "LOFI TRI"};
@@ -40,6 +40,10 @@ const char* axisNames[] = {"LX", "LY", "RX", "RY"};
 const char* assignmentNames[] = {"OFF", "PITCH", "LFO RATE", "LFO DEPTH"};
 const char* triggerNames[] = {"L1", "L2", "R1", "R2"};
 const char* factoryNames[] = {"DUB", "REGGAE", "STEPPER", "DANCEHALL"};
+const char* fontNames[] = {"DEFAULT", "CONSOLE", "ELEKTRON", "IBM VGA", "CAMCORDER",
+                           "PSGCAPITAL", "C64", "SEGMENT", "ROBOTO"};
+constexpr int fontCount = sizeof(fontNames) / sizeof(fontNames[0]);
+int renderedFont = 0;
 
 struct Instrument {
   float pitch = 600.0f, rate = 4.0f, depth = 1.0f;
@@ -112,6 +116,7 @@ struct App {
   int page = 0;
   int logicalWidth = width;
   int theme = 0;
+  int font = 0;
   int preset = 0;
   unsigned gateSources = 0;
   unsigned triggerHeld = 0;
@@ -381,6 +386,29 @@ void loadTheme(App& app) {
   app.theme = theme;
 }
 
+bool saveFont(const App& app) {
+  return writeFile(app.folder + "font.txt", "DUBFONT1 " + std::to_string(app.font) + "\n");
+}
+
+void loadFont(App& app) {
+  const std::string path = app.folder + "font.txt";
+  std::ifstream in(std::filesystem::u8path(path));
+  if (!in) {
+    std::error_code error;
+    if (std::filesystem::exists(std::filesystem::u8path(path), error) || error)
+      app.status = "CANNOT READ FONT FILE";
+    return;
+  }
+  std::string header, extra;
+  int font;
+  if (!(in >> header >> font) || header != "DUBFONT1" ||
+      font < 0 || font >= fontCount || (in >> extra)) {
+    app.status = "INVALID FONT FILE";
+    return;
+  }
+  app.font = font;
+}
+
 Sound factoryPreset(int index) {
   Sound p;
   switch (index) {
@@ -442,6 +470,10 @@ void adjust(App& app, int index, float direction) {
       app.status = saveTheme(app) ? "THEME SAVED" : "ERROR SAVING THEME";
       break;
     case 16: voice.wave = (voice.wave + (direction > 0 ? 1 : 6)) % 7; break;
+    case 17:
+      app.font = (app.font + (direction > 0 ? 1 : fontCount - 1)) % fontCount;
+      app.status = saveFont(app) ? "FONT SAVED" : "ERROR SAVING FONT";
+      break;
   }
   updateAudio(app);
 }
@@ -450,12 +482,12 @@ void text(SDL_Renderer* r, int x, int y, const std::string& value, SDL_Color col
   SDL_SetRenderDrawColor(r, color.r, color.g, color.b, 255);
   for (unsigned char ch : value) {
     if (ch < 32 || ch > 126) ch = '?';
-    const uint8_t* glyph = font12x16 + (ch - 32) * 32;
-    for (int row = 0; row < 16; ++row)
-      for (int col = 0; col < 12; ++col)
+    const uint8_t* glyph = fonts16x24[renderedFont] + (ch - 32) * 48;
+    for (int row = 0; row < 24; ++row)
+      for (int col = 0; col < 16; ++col)
         if (glyph[row * 2 + col / 8] & (0x80 >> (col % 8)))
           SDL_RenderDrawPoint(r, x + col, y + row);
-    x += 12;
+    x += 16;
   }
 }
 
@@ -540,7 +572,7 @@ void panel(SDL_Renderer* r, int x, int y, int w, int h, bool selected, const Pal
 }
 
 void centeredText(SDL_Renderer* r, int cx, int y, const std::string& value, SDL_Color color) {
-  text(r, cx - static_cast<int>(value.size()) * 6, y, value, color);
+  text(r, cx - static_cast<int>(value.size()) * 8, y, value, color);
 }
 
 std::string value(const App& app, int index) {
@@ -562,7 +594,8 @@ std::string value(const App& app, int index) {
     case 14:
       if (app.preset < 4) return factoryNames[app.preset];
       std::snprintf(buf, sizeof buf, "USER %d", app.preset - 3); break;
-    case 15: return app.theme == 0 ? "DAY RASTAFARI" : "NIGHT RASTAFARI";
+    case 15: return app.theme == 0 ? "DAY" : "NIGHT";
+    case 17: return fontNames[app.font];
     default: return waves[voice.wave];
   }
   return buf;
@@ -589,27 +622,28 @@ bool configureViewport(App& app) {
 
 void draw(App& app) {
   SDL_Renderer* r = app.renderer;
+  renderedFont = app.font;
   const Palette p = palette(app.theme);
   SDL_SetRenderDrawColor(r, p.background.r, p.background.g, p.background.b, 255);
   SDL_RenderClear(r);
   rect(r, 8, 8, app.logicalWidth - 16, 464, p.edge);
   rect(r, 12, 12, app.logicalWidth - 24, 456, p.chassis);
-  rect(r, 12, 12, app.logicalWidth - 24, 48, p.face);
-  text(r, 24, 19, "CHOOCHOO DUB SIREN", p.label.r > 128 ? p.label : SDL_Color{230, 230, 220, 255});
+  rect(r, 12, 12, app.logicalWidth - 24, 52, p.face);
+  text(r, 24, 12, "CHOOCHOO DUB SIREN", p.label.r > 128 ? p.label : SDL_Color{230, 230, 220, 255});
   const SDL_Color headerAccent = rastaGold;
   if (app.touchUi) {
     const char* names[] = {"INST", "COMMON", "STICKS"};
     const int active = app.assignMode ? 2 : app.page;
     for (int i = 0; i < 3; ++i) {
       const int x = 20 + i * 158;
-      panel(r, x, 34, 150, 25, i == active, p);
+      panel(r, x, 35, 150, 28, i == active, p);
       centeredText(r, x + 75, 38, names[i], p.label);
     }
-    text(r, 510, 39, std::string("PART ") + triggerNames[app.selectedInstrument], headerAccent);
+    text(r, 510, 37, std::string("PART ") + triggerNames[app.selectedInstrument], headerAccent);
   } else {
-    text(r, 24, 39, app.assignMode ? "03 STICKS" : (app.page == 0 ? "01 INSTRUMENT" : "02 COMMON"),
+    text(r, 24, 37, app.assignMode ? "03 STICKS" : (app.page == 0 ? "01 INSTRUMENT" : "02 COMMON"),
          headerAccent);
-    text(r, 408, 39, std::string("PART ") + triggerNames[app.selectedInstrument], headerAccent);
+    text(r, 408, 37, std::string("PART ") + triggerNames[app.selectedInstrument], headerAccent);
   }
   const int peak = app.peak.load(std::memory_order_relaxed);
   for (int i = 0; i < 16; ++i)
@@ -617,33 +651,33 @@ void draw(App& app) {
   rect(r, 584, 20, 20, 14, app.gateSources ? headerAccent : p.muted);
   const int stripeWidth = app.logicalWidth - 24;
   const int redWidth = stripeWidth / 3, goldWidth = (stripeWidth + 2) / 3;
-  rect(r, 12, 60, redWidth, 4, rastaRed);
-  rect(r, 12 + redWidth, 60, goldWidth, 4, rastaGold);
-  rect(r, 12 + redWidth + goldWidth, 60, stripeWidth - redWidth - goldWidth, 4, rastaGreen);
+  rect(r, 12, 64, redWidth, 4, rastaRed);
+  rect(r, 12 + redWidth, 64, goldWidth, 4, rastaGold);
+  rect(r, 12 + redWidth + goldWidth, 64, stripeWidth - redWidth - goldWidth, 4, rastaGreen);
 
   if (app.assignMode) {
-    text(r, 34, 79, "AXIS", p.label);
-    text(r, 112, 79, "ASSIGN", p.label);
-    text(r, 364, 79, "RATE", p.label);
-    text(r, 492, 79, "INVERT", p.label);
+    text(r, 24, 72, "AXIS", p.label);
+    text(r, 100, 72, "ASSIGN", p.label);
+    text(r, 352, 72, "RATE", p.label);
+    text(r, 474, 72, "INVERT", p.label);
     for (int i = 0; i < axisCount; ++i) {
-      const int y = 105 + i * 58;
-      text(r, 34, y + 15, axisNames[i], p.label);
-      panel(r, 100, y, 248, 46, app.selectedAxis == i && app.selectedAxisField == 0, p);
-      text(r, 112, y + 15, assignmentNames[app.assignments[i]], p.accent);
-      panel(r, 352, y, 120, 46, app.selectedAxis == i && app.selectedAxisField == 1, p);
-      text(r, 364, y + 15, std::to_string(app.axisRate[i]) + "%", p.accent);
-      panel(r, 476, y, 144, 46, app.selectedAxis == i && app.selectedAxisField == 2, p);
-      text(r, 492, y + 15, app.axisInvert[i] ? "ON" : "OFF", p.accent);
+      const int y = 103 + i * 58;
+      text(r, 24, y + 10, axisNames[i], p.label);
+      panel(r, 83, y, 252, 44, app.selectedAxis == i && app.selectedAxisField == 0, p);
+      text(r, 95, y + 10, assignmentNames[app.assignments[i]], p.accent);
+      panel(r, 340, y, 112, 44, app.selectedAxis == i && app.selectedAxisField == 1, p);
+      text(r, 350, y + 10, std::to_string(app.axisRate[i]) + "%", p.accent);
+      panel(r, 457, y, 163, 44, app.selectedAxis == i && app.selectedAxisField == 2, p);
+      text(r, 468, y + 10, app.axisInvert[i] ? "ON" : "OFF", p.accent);
     }
-    centeredText(r, 320, 346, app.touchUi ? "TAP OR DRAG TO EDIT" : "DPAD SELECT  A+DPAD EDIT", p.label);
+    centeredText(r, 320, 333, app.touchUi ? "TAP OR DRAG TO EDIT" : "DPAD SELECT A+DPAD EDIT", p.label);
   } else if (app.page == 0) {
     for (int i = 0; i < triggerCount; ++i) {
       const int x = 20 + i * 151;
-      panel(r, x, 69, 145, 57, app.selection == 3 + i, p);
-      text(r, x + 12, 79, triggerNames[i], p.label);
-      rect(r, x + 116, 79, 14, 14, app.selectedInstrument == i ? p.accent : p.muted);
-      centeredText(r, x + 72, 103, value(app, 3 + i), p.label);
+      panel(r, x, 70, 145, 55, app.selection == 3 + i, p);
+      text(r, x + 8, 74, triggerNames[i], p.label);
+      rect(r, x + 116, 77, 14, 14, app.selectedInstrument == i ? p.accent : p.muted);
+      centeredText(r, x + 72, 97, value(app, 3 + i), p.label);
     }
     const Instrument& voice = app.patch.instruments[app.selectedInstrument];
     const float values[] = {(voice.pitch - 80.0f) / 2920.0f,
@@ -651,87 +685,91 @@ void draw(App& app) {
     const char* names[] = {"PITCH", "LFO RATE", "LFO DEPTH"};
     for (int i = 0; i < 3; ++i) {
       const int x = 20 + i * 201, cx = x + 97;
-      panel(r, x, 137, 195, 153, app.selection == i, p);
-      centeredText(r, cx, 151, names[i], p.label);
-      dial(r, cx, 218, values[i], p);
-      centeredText(r, cx, 265, value(app, i), p.label);
+      panel(r, x, 130, 195, 154, app.selection == i, p);
+      centeredText(r, cx, 135, names[i], p.label);
+      dial(r, cx, 207, values[i], p);
+      centeredText(r, cx, 255, value(app, i), p.label);
     }
-    panel(r, 20, 301, 195, 58, app.selection == 16, p);
-    text(r, 32, 311, "WAVEFORM", p.label);
-    text(r, 32, 335, value(app, 16), p.accent);
-    panel(r, 221, 301, 195, 58, app.selection == 7, p);
-    text(r, 233, 311, "LFO SHAPE", p.label);
-    text(r, 233, 335, value(app, 7), p.accent);
-    panel(r, 422, 301, 195, 58, app.selection == 8, p);
-    text(r, 434, 311, "RETRIG", p.label);
-    text(r, 434, 335, value(app, 8), p.accent);
+    panel(r, 20, 290, 195, 64, app.selection == 16, p);
+    text(r, 30, 295, "WAVEFORM", p.label);
+    text(r, 30, 323, value(app, 16), p.accent);
+    panel(r, 221, 290, 195, 64, app.selection == 7, p);
+    text(r, 231, 295, "LFO SHAPE", p.label);
+    text(r, 231, 323, value(app, 7), p.accent);
+    panel(r, 422, 290, 195, 64, app.selection == 8, p);
+    text(r, 432, 295, "RETRIG", p.label);
+    text(r, 432, 323, value(app, 8), p.accent);
   } else {
-    panel(r, 20, 80, 146, 202, app.selection == 9, p);
-    centeredText(r, 93, 98, "MASTER", p.label);
-    centeredText(r, 93, 119, "VOLUME", p.label);
-    dial(r, 93, 185, app.patch.volume / 0.5f, p);
-    centeredText(r, 93, 237, value(app, 9), p.label);
-    rect(r, 176, 70, 444, 212, p.edge);
-    rect(r, 179, 73, 438, 206, p.inset);
-    centeredText(r, 398, 80, "COMMON DELAY", p.label);
+    panel(r, 20, 78, 146, 205, app.selection == 9, p);
+    centeredText(r, 93, 91, "MASTER", p.label);
+    centeredText(r, 93, 115, "VOLUME", p.label);
+    dial(r, 93, 184, app.patch.volume / 0.5f, p);
+    centeredText(r, 93, 244, value(app, 9), p.label);
+    rect(r, 176, 70, 444, 213, p.edge);
+    rect(r, 179, 73, 438, 207, p.inset);
+    centeredText(r, 398, 77, "COMMON DELAY", p.label);
     const int ids[] = {11, 12, 13};
     const char* names[] = {"TIME", "FEEDBACK", "MIX"};
     const float values[] = {(app.patch.echoTime - 0.05f) / 1.45f,
                             app.patch.feedback / 0.85f, app.patch.echoMix / 0.75f};
     for (int i = 0; i < 3; ++i) {
       const int x = 187 + i * 142, cx = x + 68;
-      panel(r, x, 103, 136, 130, app.selection == ids[i], p);
-      centeredText(r, cx, 115, names[i], p.label);
-      dial(r, cx, 172, values[i], p);
-      centeredText(r, cx, 213, value(app, ids[i]), p.label);
+      panel(r, x, 104, 136, 142, app.selection == ids[i], p);
+      centeredText(r, cx, 108, names[i], p.label);
+      dial(r, cx, 177, values[i], p);
+      centeredText(r, cx, 219, value(app, ids[i]), p.label);
     }
-    panel(r, 187, 238, 420, 32, app.selection == 10, p);
-    text(r, 202, 246, "ECHO", p.label);
-    text(r, 500, 246, value(app, 10), p.accent);
-    panel(r, 20, 293, 368, 66, app.selection == 14, p);
-    text(r, 34, 305, "PRESET", p.label);
-    text(r, 34, 331, "<", p.accent);
-    centeredText(r, 204, 331, value(app, 14), p.accent);
-    text(r, 356, 331, ">", p.accent);
-    panel(r, 398, 293, 222, 66, app.selection == 15, p);
-    text(r, 412, 305, "THEME", p.label);
-    text(r, 412, 331, value(app, 15), p.accent);
+    panel(r, 187, 251, 420, 29, app.selection == 10, p);
+    text(r, 202, 253, "ECHO", p.label);
+    text(r, 500, 253, value(app, 10), p.accent);
+    panel(r, 20, 290, 195, 64, app.selection == 14, p);
+    text(r, 30, 295, "PRESET", p.label);
+    text(r, 25, 323, "<", p.accent);
+    centeredText(r, 117, 323, value(app, 14), p.accent);
+    text(r, 193, 323, ">", p.accent);
+    panel(r, 221, 290, 195, 64, app.selection == 15, p);
+    text(r, 231, 295, "THEME", p.label);
+    text(r, 231, 323, value(app, 15), p.accent);
+    panel(r, 422, 290, 195, 64, app.selection == 17, p);
+    text(r, 432, 295, "FONT", p.label);
+    text(r, 432, 323, value(app, 17), p.accent);
   }
 
   if (app.touchUi && app.logicalWidth >= 800) {
-    panel(r, 640, 70, app.logicalWidth - 660, 290, false, p);
-    centeredText(r, (app.logicalWidth + 620) / 2, 80, "LIVE PADS", p.label);
+    panel(r, 640, 70, app.logicalWidth - 660, 284, false, p);
+    if (app.logicalWidth >= 800 + 84)
+      centeredText(r, (app.logicalWidth + 620) / 2, 77, "LIVE PADS", p.label);
     for (int i = 0; i < triggerCount; ++i) {
       const SDL_Rect pad = livePadRect(app, i);
       panel(r, pad.x, pad.y, pad.w, pad.h, app.triggers[i] != 0, p);
-      centeredText(r, pad.x + pad.w / 2, pad.y + 28, triggerNames[i], p.label);
+      centeredText(r, pad.x + pad.w / 2, pad.y + 23, triggerNames[i], p.label);
       const char* wave = waves[app.patch.instruments[i].wave];
-      if (static_cast<int>(std::strlen(wave)) * 12 + 12 <= pad.w)
-        centeredText(r, pad.x + pad.w / 2, pad.y + 60, wave, p.accent);
+      if (static_cast<int>(std::strlen(wave)) * 16 + 12 <= pad.w)
+        centeredText(r, pad.x + pad.w / 2, pad.y + 57, wave, p.accent);
     }
   }
 
-  text(r, 24, 372, app.status, p.accent);
+  text(r, 24, 359, app.status, p.accent);
   if (app.touchUi) {
     for (int i = 0; i < triggerCount; ++i) {
       const int x = 20 + i * 70;
-      panel(r, x, 396, 65, 64, app.triggers[i] != 0, p);
-      centeredText(r, x + 32, 420, triggerNames[i], p.label);
+      panel(r, x, 389, 65, 72, app.triggers[i] != 0, p);
+      centeredText(r, x + 32, 411, triggerNames[i], p.label);
     }
     const char* names[] = {"PANIC", "EXIT", "LOAD", "SAVE"};
     for (int i = 0; i < 4; ++i) {
-      const int x = 305 + (i % 2) * 157, y = 396 + (i / 2) * 34;
-      panel(r, x, y, 150, 30, false, p);
-      centeredText(r, x + 75, y + 7, names[i], p.label);
+      const int x = 305 + (i % 2) * 157, y = 389 + (i / 2) * 36;
+      panel(r, x, y, 150, 34, false, p);
+      centeredText(r, x + 75, y + 5, names[i], p.label);
     }
   } else if (app.assignMode) {
-    text(r, 24, 402, "SELECT PAGE  B/START BACK  SELECT+B PANIC", p.label);
-    text(r, 24, 424, "A TOGGLE INVERT", p.label);
-    text(r, 24, 446, "L1 L2 R1 R2 PLAY", p.label);
+    text(r, 24, 387, "SELECT PAGE  B/START BACK", p.label);
+    text(r, 24, 412, "A TOGGLE INVERT  SELECT+B PANIC", p.label);
+    text(r, 24, 437, "L1 L2 R1 R2 PLAY", p.label);
   } else {
-    text(r, 24, 396, "DPAD NAV  A+DPAD EDIT  SELECT PAGE", p.label);
-    text(r, 24, 418, "L1 L2 R1 R2 PLAY   B PANIC   START STICKS", p.label);
-    text(r, 24, 440, "X LOAD  Y SAVE   SELECT+START EXIT", p.label);
+    text(r, 24, 387, "DPAD NAV A+DPAD EDIT SELECT PAGE", p.label);
+    text(r, 24, 412, "L1 L2 R1 R2 PLAY B PANIC START STICKS", p.label);
+    text(r, 24, 437, "X LOAD Y SAVE SELECT+START EXIT", p.label);
   }
   SDL_RenderPresent(r);
 }
@@ -742,7 +780,7 @@ int nextSelection(int selection, int button) {
     {3, 0, 3, 4}, {4, 1, 3, 5}, {5, 1, 4, 6}, {6, 2, 5, 6},
     {1, 4, 16, 8}, {2, 6, 7, 8}, {9, 14, 9, 11}, {12, 15, 9, 10},
     {11, 10, 9, 12}, {12, 10, 11, 13}, {13, 10, 12, 13}, {9, 14, 14, 15},
-    {10, 15, 14, 15}, {0, 3, 16, 7}
+    {10, 15, 14, 17}, {0, 3, 16, 7}, {10, 17, 15, 17}
   };
   const int direction = button == SDL_CONTROLLER_BUTTON_DPAD_UP ? 0 :
                         button == SDL_CONTROLLER_BUTTON_DPAD_DOWN ? 1 :
@@ -823,7 +861,7 @@ void action(App& app, int button, bool down, unsigned source) {
     else if (app.selection == 14) {
       if (!app.editWithSelect && !app.selectSources) recall(app);
       else saveSelectedPreset(app);
-    } else if (app.selection == 8 || app.selection == 10 || app.selection == 15)
+    } else if (app.selection == 8 || app.selection == 10 || app.selection == 15 || app.selection == 17)
       adjust(app, app.selection, 1);
     return;
   }
@@ -911,41 +949,41 @@ void pointerDown(App& app, bool mouse, SDL_TouchID device, SDL_FingerID finger, 
     }
   }
 
-  if (app.touchUi && inside(x, y, 20, 34, 466, 25)) {
+  if (app.touchUi && inside(x, y, 20, 35, 466, 28)) {
     const int screen = static_cast<int>((x - 20) / 158);
-    if (screen < 3 && inside(x, y, 20 + screen * 158, 34, 150, 25) &&
+    if (screen < 3 && inside(x, y, 20 + screen * 158, 35, 150, 28) &&
         screen != (app.assignMode ? 2 : app.page)) selectScreen(app, screen);
     return;
-  } else if (app.touchUi && inside(x, y, 20, 396, 275, 64)) {
+  } else if (app.touchUi && inside(x, y, 20, 389, 275, 72)) {
     const int index = static_cast<int>((x - 20) / 70);
-    if (index < triggerCount && inside(x, y, 20 + index * 70, 396, 65, 64)) {
+    if (index < triggerCount && inside(x, y, 20 + index * 70, 389, 65, 72)) {
       pointer.trigger = index;
       trigger(app, index, source, true);
     }
     return;
-  } else if (app.touchUi && inside(x, y, 305, 396, 307, 64)) {
+  } else if (app.touchUi && inside(x, y, 305, 389, 307, 72)) {
     const int col = static_cast<int>((x - 305) / 157);
-    const int row = static_cast<int>((y - 396) / 34);
-    if (col < 2 && row < 2 && inside(x, y, 305 + col * 157, 396 + row * 34, 150, 30)) {
+    const int row = static_cast<int>((y - 389) / 36);
+    if (col < 2 && row < 2 && inside(x, y, 305 + col * 157, 389 + row * 36, 150, 34)) {
       if (row == 0 && col == 0) panic(app);
       else if (row == 0) app.running = false;
       else if (col == 0) recall(app);
       else saveSelectedPreset(app);
     }
     return;
-  } else if (!app.touchUi && inside(x, y, 24, 32, 220, 28)) {
+  } else if (!app.touchUi && inside(x, y, 24, 35, 300, 28)) {
     action(app, SDL_CONTROLLER_BUTTON_BACK, true, source);
     action(app, SDL_CONTROLLER_BUTTON_BACK, false, source);
-  } else if (!app.touchUi && inside(x, y, 24, app.assignMode ? 442 : 414, 144, 24)) {
-    pointer.trigger = static_cast<int>((x - 24) / 36);
+  } else if (!app.touchUi && inside(x, y, 24, app.assignMode ? 437 : 412, 192, 24)) {
+    pointer.trigger = static_cast<int>((x - 24) / 48);
     trigger(app, pointer.trigger, source, true);
     return;
   } else if (app.assignMode) {
     for (int i = 0; i < axisCount; ++i) {
-      const int top = 105 + i * 58;
-      const int field = inside(x, y, 100, top, 248, 46) ? 0 :
-                        inside(x, y, 352, top, 120, 46) ? 1 :
-                        inside(x, y, 476, top, 144, 46) ? 2 : -1;
+      const int top = 103 + i * 58;
+      const int field = inside(x, y, 83, top, 252, 44) ? 0 :
+                        inside(x, y, 340, top, 112, 44) ? 1 :
+                        inside(x, y, 457, top, 163, 44) ? 2 : -1;
       if (field >= 0) {
         app.selectedAxis = i;
         app.selectedAxisField = field;
@@ -956,45 +994,48 @@ void pointerDown(App& app, bool mouse, SDL_TouchID device, SDL_FingerID finger, 
     }
   } else if (app.page == 0) {
     for (int i = 0; i < triggerCount; ++i) {
-      if (inside(x, y, 20 + i * 151, 69, 145, 57)) {
+      if (inside(x, y, 20 + i * 151, 70, 145, 55)) {
         pointer.trigger = i;
         trigger(app, i, source, true);
         return;
       }
     }
     for (int i = 0; i < 3; ++i) {
-      if (inside(x, y, 20 + i * 201, 137, 195, 153)) {
+      if (inside(x, y, 20 + i * 201, 130, 195, 154)) {
         app.selection = i;
         pointer.control = i;
         return;
       }
     }
-    const int control = inside(x, y, 20, 301, 195, 58) ? 16 :
-                        inside(x, y, 221, 301, 195, 58) ? 7 :
-                        inside(x, y, 422, 301, 195, 58) ? 8 : -1;
+    const int control = inside(x, y, 20, 290, 195, 64) ? 16 :
+                        inside(x, y, 221, 290, 195, 64) ? 7 :
+                        inside(x, y, 422, 290, 195, 64) ? 8 : -1;
     if (control >= 0) { app.selection = control; adjust(app, control, 1); }
   } else {
-    if (inside(x, y, 20, 80, 146, 202)) { app.selection = pointer.control = 9; return; }
+    if (inside(x, y, 20, 78, 146, 205)) { app.selection = pointer.control = 9; return; }
     for (int i = 0; i < 3; ++i) {
-      if (inside(x, y, 187 + i * 142, 103, 136, 130)) {
+      if (inside(x, y, 187 + i * 142, 104, 136, 142)) {
         app.selection = pointer.control = 11 + i;
         return;
       }
     }
-    if (inside(x, y, 187, 238, 420, 32)) { app.selection = 10; adjust(app, 10, 1); }
-    else if (inside(x, y, 20, 293, 368, 66)) {
+    if (inside(x, y, 187, 251, 420, 29)) { app.selection = 10; adjust(app, 10, 1); }
+    else if (inside(x, y, 20, 290, 195, 64)) {
       app.selection = 14;
-      if (x < 100) adjust(app, 14, -1);
-      else if (x >= 320) adjust(app, 14, 1);
+      if (x < 60) adjust(app, 14, -1);
+      else if (x >= 175) adjust(app, 14, 1);
       else recall(app);
-    } else if (inside(x, y, 398, 293, 222, 66)) {
+    } else if (inside(x, y, 221, 290, 195, 64)) {
       app.selection = 15;
       adjust(app, 15, 1);
+    } else if (inside(x, y, 422, 290, 195, 64)) {
+      app.selection = 17;
+      adjust(app, 17, x < 450 ? -1 : 1);
     }
   }
-  if (!app.touchUi && !app.assignMode && inside(x, y, 240, 418, 120, 20)) panic(app);
-  else if (!app.touchUi && !app.assignMode && inside(x, y, 24, 440, 84, 20)) recall(app);
-  else if (!app.touchUi && !app.assignMode && inside(x, y, 120, 440, 90, 20))
+  if (!app.touchUi && !app.assignMode && inside(x, y, 296, 412, 112, 24)) panic(app);
+  else if (!app.touchUi && !app.assignMode && inside(x, y, 24, 437, 96, 24)) recall(app);
+  else if (!app.touchUi && !app.assignMode && inside(x, y, 136, 437, 96, 24))
     saveSelectedPreset(app);
 }
 
@@ -1087,6 +1128,7 @@ int main(int argc, char** argv) {
   SDL_free(pref);
   loadAssignments(app);
   loadTheme(app);
+  loadFont(app);
 #ifdef __ANDROID__
   SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
 #endif

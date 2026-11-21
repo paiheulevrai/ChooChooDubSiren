@@ -12,7 +12,9 @@ if width <= height:
     raise ValueError(f"Android UI is not landscape: {width}x{height}")
 logical_width = max(640, min(1600, round(480 * width / height)))
 target = sys.argv[2]
-if target == "pad":
+if target == "font":
+    logical_x, logical_y = 500, 330
+elif target == "pad":
     if logical_width < 800:
         raise ValueError(f"No wide pad at logical width {logical_width}")
     pad_width = (logical_width - 688) // 2

@@ -160,9 +160,20 @@ int main(int argc, char** argv) {
   }
   loadTheme(app);
   assert(app.theme == 1 && app.status == "INVALID THEME FILE");
+  app.font = 3;
+  assert(saveFont(app));
+  app.font = 0;
+  loadFont(app);
+  assert(app.font == 3 && value(app, 17) == "IBM VGA");
+  {
+    std::ofstream out(std::filesystem::u8path(folder + "font.txt"), std::ios::trunc);
+    out << "DUBFONT1 99\n";
+  }
+  loadFont(app);
+  assert(app.font == 3 && app.status == "INVALID FONT FILE");
   App missing;
   missing.folder = folder + "missing/";
-  assert(!savePreset(missing, 0) && !saveTheme(missing));
+  assert(!savePreset(missing, 0) && !saveTheme(missing) && !saveFont(missing));
 
   app.patch = factoryPreset(0);
   app.selectedInstrument = 0;
@@ -271,7 +282,18 @@ int main(int argc, char** argv) {
   assert(app.theme == 1 && app.status == "THEME SAVED");
   app.theme = 0;
   loadTheme(app);
-  assert(app.theme == 1 && value(app, 15) == "NIGHT RASTAFARI");
+  assert(app.theme == 1 && value(app, 15) == "NIGHT");
+  press(app, SDL_CONTROLLER_BUTTON_DPAD_RIGHT);
+  assert(app.selection == 17);
+  press(app, SDL_CONTROLLER_BUTTON_A);
+  assert(app.font == 4 && app.status == "FONT SAVED");
+  app.font = 0;
+  loadFont(app);
+  assert(app.font == 4);
+  action(app, SDL_CONTROLLER_BUTTON_A, true, 1);
+  press(app, SDL_CONTROLLER_BUTTON_DPAD_LEFT);
+  action(app, SDL_CONTROLLER_BUTTON_A, false, 1);
+  assert(app.font == 3);
   action(app, rightTrigger, true, 1);
   assert(app.page == 1 && app.selectedInstrument == 3 && app.activeTrigger == 3);
   action(app, rightTrigger, false, 1);
@@ -367,7 +389,7 @@ int main(int argc, char** argv) {
           for (int direction : directions) reachable[nextSelection(from, direction)] = true;
     for (int index = 0; index < parameterCount; ++index)
       assert(reachable[index] == (page == 0 ? index <= 8 || index == 16 :
-                                                   index >= 9 && index <= 15));
+                                                   (index >= 9 && index <= 15) || index == 17));
   }
   assert(std::fabs(dialAngle(0) + 5.0f * 3.14159265358979323846f / 6.0f) < 0.0001f);
   assert(std::fabs(dialAngle(0.5f)) < 0.0001f);
@@ -443,7 +465,7 @@ int main(int argc, char** argv) {
   pointerDown(touch, false, 1, 13, 30, 45);
   pointerUp(touch, false, 1, 13);
   assert(touch.page == 1 && !touch.assignMode);
-  pointerDown(touch, false, 1, 22, 65, 424);
+  pointerDown(touch, false, 1, 22, 80, 424);
   assert(touch.activeTrigger == 1);
   pointerUp(touch, false, 1, 22);
   assert(!touch.gateSources);
@@ -452,16 +474,16 @@ int main(int argc, char** argv) {
   pointerMove(touch, false, 1, 14, 150);
   pointerUp(touch, false, 1, 14);
   assert(touch.patch.echoTime > echoTime);
-  pointerDown(touch, false, 1, 15, 360, 330);
+  pointerDown(touch, false, 1, 15, 200, 330);
   pointerUp(touch, false, 1, 15);
   assert(touch.preset == 1);
-  pointerDown(touch, false, 1, 16, 200, 330);
+  pointerDown(touch, false, 1, 16, 110, 330);
   pointerUp(touch, false, 1, 16);
   assert(touch.status == "PRESET LOADED");
   pointerDown(touch, false, 1, 17, 30, 45);
   pointerUp(touch, false, 1, 17);
   assert(touch.assignMode);
-  pointerDown(touch, false, 1, 23, 100, 450);
+  pointerDown(touch, false, 1, 23, 125, 450);
   assert(touch.activeTrigger == 2);
   pointerUp(touch, false, 1, 23);
   assert(!touch.gateSources);
@@ -506,8 +528,12 @@ int main(int argc, char** argv) {
   tap(6, 40, 46);
   assert(mobile.selection == 4);
   tap(7, 200, 46);
-  tap(8, 360, 330);
+  tap(8, 200, 330);
   assert(mobile.preset == 1);
+  tap(30, 500, 330);
+  assert(mobile.selection == 17 && mobile.font == 1 && mobile.status == "FONT SAVED");
+  tap(31, 430, 330);
+  assert(mobile.font == 0);
   mobile.preset = 4;
   const float savedPitch = mobile.patch.instruments[0].pitch;
   tap(9, 500, 445);
@@ -551,5 +577,6 @@ int main(int argc, char** argv) {
   std::filesystem::remove(std::filesystem::u8path(presetPath(app, 0)));
   std::filesystem::remove(std::filesystem::u8path(folder + "axes.txt"));
   std::filesystem::remove(std::filesystem::u8path(folder + "theme.txt"));
+  std::filesystem::remove(std::filesystem::u8path(folder + "font.txt"));
   std::filesystem::remove(std::filesystem::u8path(folder));
 }

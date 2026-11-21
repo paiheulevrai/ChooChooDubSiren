@@ -9,9 +9,10 @@ output=build/miyooports
 app="$output/Roms/PORTS/Games/ChooChooDubSiren"
 shortcut="$output/Roms/PORTS/Shortcuts"
 mkdir -p "$app/libs" "$app/docs" "$shortcut"
+cp -R licenses "$app/"
 "$compiler" -std=c++17 -O2 -Wall -Wextra --sysroot="$sysroot" \
   -I"$MIYOO_SDL2_ROOT/include" -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard \
-  src/main.cpp src/siren.cpp src/font12x16.cpp -L"$MIYOO_SDL2_ROOT/lib" \
+  src/main.cpp src/siren.cpp src/fonts16x24.cpp -L"$MIYOO_SDL2_ROOT/lib" \
   -lSDL2 -Wl,--allow-shlib-undefined -lstdc++fs -static-libstdc++ -static-libgcc \
   -ldl -lpthread -lm -o "$app/dubsiren"
 "$MIYOO_TOOLCHAIN/bin/arm-linux-gnueabihf-strip" "$app/dubsiren"
