@@ -1,0 +1,86 @@
+name: Android
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android SDK and NDK
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;26.3.11579264"
+      - name: Prepare SDL2 project
+        run: |
+          curl --fail --location --retry 3 -o "$RUNNER_TEMP/SDL2.tar.gz" \
+            https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-2.32.10.tar.gz
+          echo "5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165  $RUNNER_TEMP/SDL2.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/SDL2.tar.gz" -C "$RUNNER_TEMP"
+          sdl="$RUNNER_TEMP/SDL2-2.32.10"
+          project="$RUNNER_TEMP/ccsiren-android"
+          cp -a "$sdl/android-project" "$project"
+          ln -s "$sdl" "$project/app/jni/SDL"
+          mkdir -p "$project/app/jni/src/include/SDL2"
+          cp "$sdl"/include/*.h "$project/app/jni/src/include/SDL2/"
+          cp src/main.cpp src/siren.cpp src/siren.h src/font12x16.cpp "$project/app/jni/src/"
+          cp packaging/android/Android.mk "$project/app/jni/src/Android.mk"
+          cp packaging/android/Application.mk "$project/app/jni/Application.mk"
+          cp packaging/android/build.gradle "$project/app/build.gradle"
+          cp packaging/android/AndroidManifest.xml "$project/app/src/main/AndroidManifest.xml"
+      - name: Build and verify APK
+        run: |
+          project="$RUNNER_TEMP/ccsiren-android"
+          cd "$project"
+          ./gradlew --no-daemon --console=plain assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/ChooChooDubSiren-Android-preview.apk"
+          apk="$RUNNER_TEMP/ChooChooDubSiren-Android-preview.apk"
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose "$apk"
+          unzip -Z1 "$apk" > "$RUNNER_TEMP/android-apk-files.txt"
+          for abi in armeabi-v7a arm64-v8a x86_64; do
+            grep -Fxq "lib/$abi/libSDL2.so" "$RUNNER_TEMP/android-apk-files.txt"
+            grep -Fxq "lib/$abi/libmain.so" "$RUNNER_TEMP/android-apk-files.txt"
+            unzip -p "$apk" "lib/$abi/libmain.so" > "$RUNNER_TEMP/libmain.so"
+            readelf -Ws "$RUNNER_TEMP/libmain.so" > "$RUNNER_TEMP/android-symbols.txt"
+            grep -Eq 'GLOBAL +DEFAULT +[0-9]+ +SDL_main$' "$RUNNER_TEMP/android-symbols.txt"
+          done
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Test startup and touch on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          arch: x86_64
+          disable-animations: true
+          script: |
+            adb install "$RUNNER_TEMP/ChooChooDubSiren-Android-preview.apk"
+            adb shell am start -n com.paiheulevrai.choochoodubsiren/org.libsdl.app.SDLActivity
+            sleep 15
+            adb shell pidof com.paiheulevrai.choochoodubsiren
+            adb exec-out screencap -p > "$RUNNER_TEMP/android-before.png"
+            python3 packaging/android/tap-header.py "$RUNNER_TEMP/android-before.png"
+            sleep 2
+            adb shell pidof com.paiheulevrai.choochoodubsiren
+            adb exec-out screencap -p > "$RUNNER_TEMP/android-after.png"
+            ! cmp -s "$RUNNER_TEMP/android-before.png" "$RUNNER_TEMP/android-after.png"
+            adb logcat -d -s SDL:V AndroidRuntime:E | grep -q 'Running main function SDL_main'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-preview
+          path: ${{ runner.temp }}/ChooChooDubSiren-Android-preview.apk
+          if-no-files-found: error

@@ -117,9 +117,15 @@ Download the appropriate archive from the
 | **PortMaster** | Copy `ChooChooDubSiren.sh` and the `choochoodubsiren` folder into your console's `ports` directory. Launch from **Ports**. |
 | **Miyoo Mini / Mini Plus with OnionOS** | Extract the MiyooPorts archive to the SD card root and launch **ChooChooDubSiren** from Ports. |
 | **NextUI** | Install the Pak contents in `Tools/tg5040/ChooChooDubSiren.pak` on the SD card. |
+| **Android** | Install the Android preview APK on Android 8.0 or later, allowing installation from your chosen source if prompted. The app runs in landscape and supports touch. |
 
 Compatibility and latency vary by hardware and firmware; test your own setup
 before playing live.
+
+The Android preview APK is signed with an automatically generated debug key,
+not a stable release key. Future builds may require uninstalling it before
+installation, which removes its private settings and presets.
+The Android GitHub Actions workflow builds the APK and tests it on an emulator.
 
 ## Connect safely
 
