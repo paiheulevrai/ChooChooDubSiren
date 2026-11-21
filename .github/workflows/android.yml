@@ -82,8 +82,18 @@ jobs:
             sleep 2
             adb shell pidof com.paiheulevrai.choochoodubsiren
             adb exec-out screencap -p > "$RUNNER_TEMP/android-after.png"
+            adb logcat -d -s SDL:V AndroidRuntime:E > "$RUNNER_TEMP/android-logcat.txt"
             ! cmp -s "$RUNNER_TEMP/android-before.png" "$RUNNER_TEMP/android-after.png"
-            adb logcat -d -s SDL:V AndroidRuntime:E | grep -q 'Running main function SDL_main'
+            grep -q 'Running main function SDL_main' "$RUNNER_TEMP/android-logcat.txt"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: android-test-diagnostics
+          path: |
+            ${{ runner.temp }}/android-before.png
+            ${{ runner.temp }}/android-after.png
+            ${{ runner.temp }}/android-logcat.txt
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
           name: android-preview
