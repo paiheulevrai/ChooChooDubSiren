@@ -6,7 +6,7 @@
 
 Four sound slots, simple to use, instant playability, designed for live performance.
 
-Sounds good because its based on the ChooChooTracker engine.
+Sounds good because it's based on the ChooChooTracker engine.
 
 Supports joysticks, touchscreen, and classic Dpad.
 
