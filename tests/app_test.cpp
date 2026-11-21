@@ -406,6 +406,20 @@ int main(int argc, char** argv) {
   SDL_DestroyRenderer(renderer);
   SDL_FreeSurface(surface);
 
+  surface = SDL_CreateRGBSurfaceWithFormat(0, 960, 480, 32, SDL_PIXELFORMAT_ARGB8888);
+  assert(surface);
+  renderer = SDL_CreateSoftwareRenderer(surface);
+  assert(renderer);
+  App viewport;
+  viewport.touchUi = true;
+  viewport.renderer = renderer;
+  assert(configureViewport(viewport) && viewport.logicalWidth == 960);
+  int logicalWidth = 0, logicalHeight = 0;
+  SDL_RenderGetLogicalSize(renderer, &logicalWidth, &logicalHeight);
+  assert(logicalWidth == 960 && logicalHeight == 480);
+  SDL_DestroyRenderer(renderer);
+  SDL_FreeSurface(surface);
+
   App touch;
   touch.audio = app.audio;
   touch.folder = folder;
@@ -507,6 +521,21 @@ int main(int argc, char** argv) {
   pointerUp(mobile, false, 3, 11);
   tap(13, 500, 410);
   assert(!mobile.running);
+
+  assert(touchLogicalWidth(640, 480) == 640);
+  assert(touchLogicalWidth(1920, 1080) == 853);
+  assert(touchLogicalWidth(2400, 1080) == 1067);
+  assert(touchLogicalWidth(0, 0) == 640);
+  mobile.running = true;
+  mobile.logicalWidth = 960;
+  const SDL_Rect largePad = livePadRect(mobile, 3);
+  assert(largePad.x + largePad.w <= mobile.logicalWidth - 20);
+  pointerDown(mobile, false, 4, 1, largePad.x + largePad.w / 2, largePad.y + largePad.h / 2);
+  assert(mobile.activeTrigger == 3 && mobile.selectedInstrument == 3);
+  tap(14, 360, 46);
+  assert(mobile.assignMode && mobile.activeTrigger == 3);
+  pointerUp(mobile, false, 4, 1);
+  assert(!mobile.gateSources);
 
   assert(keyButton(SDLK_w) == leftTrigger && keyButton(SDLK_e) == rightTrigger);
   triggerAxis(app, 1, 16001);

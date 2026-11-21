@@ -110,6 +110,7 @@ struct App {
   std::atomic<int> peak{0};
   int selection = 0;
   int page = 0;
+  int logicalWidth = width;
   int theme = 0;
   int preset = 0;
   unsigned gateSources = 0;
@@ -567,14 +568,33 @@ std::string value(const App& app, int index) {
   return buf;
 }
 
+SDL_Rect livePadRect(const App& app, int index) {
+  const int w = (app.logicalWidth - 688) / 2;
+  return {650 + (index % 2) * (w + 8), 105 + (index / 2) * 120, w, 104};
+}
+
+int touchLogicalWidth(int outputWidth, int outputHeight) {
+  if (outputWidth <= 0 || outputHeight <= 0) return width;
+  return std::clamp(static_cast<int>(std::round(
+      static_cast<double>(height) * outputWidth / outputHeight)), width, 1600);
+}
+
+bool configureViewport(App& app) {
+  int w = width, h = height;
+  if (app.touchUi && SDL_GetRendererOutputSize(app.renderer, &w, &h) != 0) return false;
+  if (w <= 0 || h <= 0) return true;
+  app.logicalWidth = app.touchUi ? touchLogicalWidth(w, h) : width;
+  return SDL_RenderSetLogicalSize(app.renderer, app.logicalWidth, height) == 0;
+}
+
 void draw(App& app) {
   SDL_Renderer* r = app.renderer;
   const Palette p = palette(app.theme);
   SDL_SetRenderDrawColor(r, p.background.r, p.background.g, p.background.b, 255);
   SDL_RenderClear(r);
-  rect(r, 8, 8, 624, 464, p.edge);
-  rect(r, 12, 12, 616, 456, p.chassis);
-  rect(r, 12, 12, 616, 48, p.face);
+  rect(r, 8, 8, app.logicalWidth - 16, 464, p.edge);
+  rect(r, 12, 12, app.logicalWidth - 24, 456, p.chassis);
+  rect(r, 12, 12, app.logicalWidth - 24, 48, p.face);
   text(r, 24, 19, "CHOOCHOO DUB SIREN", p.label.r > 128 ? p.label : SDL_Color{230, 230, 220, 255});
   const SDL_Color headerAccent = rastaGold;
   if (app.touchUi) {
@@ -595,9 +615,11 @@ void draw(App& app) {
   for (int i = 0; i < 16; ++i)
     rect(r, 444 + i * 8, 24, 5, 6, peak * 16 / 32768 > i ? headerAccent : p.muted);
   rect(r, 584, 20, 20, 14, app.gateSources ? headerAccent : p.muted);
-  rect(r, 12, 60, 205, 4, rastaRed);
-  rect(r, 217, 60, 206, 4, rastaGold);
-  rect(r, 423, 60, 205, 4, rastaGreen);
+  const int stripeWidth = app.logicalWidth - 24;
+  const int redWidth = stripeWidth / 3, goldWidth = (stripeWidth + 2) / 3;
+  rect(r, 12, 60, redWidth, 4, rastaRed);
+  rect(r, 12 + redWidth, 60, goldWidth, 4, rastaGold);
+  rect(r, 12 + redWidth + goldWidth, 60, stripeWidth - redWidth - goldWidth, 4, rastaGreen);
 
   if (app.assignMode) {
     text(r, 34, 79, "AXIS", p.label);
@@ -674,6 +696,19 @@ void draw(App& app) {
     panel(r, 398, 293, 222, 66, app.selection == 15, p);
     text(r, 412, 305, "THEME", p.label);
     text(r, 412, 331, value(app, 15), p.accent);
+  }
+
+  if (app.touchUi && app.logicalWidth >= 800) {
+    panel(r, 640, 70, app.logicalWidth - 660, 290, false, p);
+    centeredText(r, (app.logicalWidth + 620) / 2, 80, "LIVE PADS", p.label);
+    for (int i = 0; i < triggerCount; ++i) {
+      const SDL_Rect pad = livePadRect(app, i);
+      panel(r, pad.x, pad.y, pad.w, pad.h, app.triggers[i] != 0, p);
+      centeredText(r, pad.x + pad.w / 2, pad.y + 28, triggerNames[i], p.label);
+      const char* wave = waves[app.patch.instruments[i].wave];
+      if (static_cast<int>(std::strlen(wave)) * 12 + 12 <= pad.w)
+        centeredText(r, pad.x + pad.w / 2, pad.y + 60, wave, p.accent);
+    }
   }
 
   text(r, 24, 372, app.status, p.accent);
@@ -865,6 +900,17 @@ void pointerDown(App& app, bool mouse, SDL_TouchID device, SDL_FingerID finger, 
   pointer.lastY = y;
   const unsigned source = 1u << (slot + 2);
 
+  if (app.touchUi && app.logicalWidth >= 800) {
+    for (int i = 0; i < triggerCount; ++i) {
+      const SDL_Rect pad = livePadRect(app, i);
+      if (inside(x, y, pad.x, pad.y, pad.w, pad.h)) {
+        pointer.trigger = i;
+        trigger(app, i, source, true);
+        return;
+      }
+    }
+  }
+
   if (app.touchUi && inside(x, y, 20, 34, 466, 25)) {
     const int screen = static_cast<int>((x - 20) / 158);
     if (screen < 3 && inside(x, y, 20 + screen * 158, 34, 150, 25) &&
@@ -1050,7 +1096,13 @@ int main(int argc, char** argv) {
   if (app.window) app.renderer = SDL_CreateRenderer(app.window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
   if (app.window && !app.renderer) app.renderer = SDL_CreateRenderer(app.window, -1, SDL_RENDERER_SOFTWARE);
   if (!app.renderer) { std::fprintf(stderr, "Video initialization failed: %s\n", SDL_GetError()); SDL_Quit(); return 1; }
-  SDL_RenderSetLogicalSize(app.renderer, width, height);
+  if (!configureViewport(app)) {
+    std::fprintf(stderr, "Viewport initialization failed: %s\n", SDL_GetError());
+    SDL_DestroyRenderer(app.renderer);
+    SDL_DestroyWindow(app.window);
+    SDL_Quit();
+    return 1;
+  }
   SDL_AudioSpec desired{}, obtained{};
   desired.freq = 48000; desired.format = AUDIO_S16SYS; desired.channels = 2;
   desired.samples = 512; desired.callback = audioCallback; desired.userdata = &app;
@@ -1076,7 +1128,7 @@ int main(int argc, char** argv) {
         const SDL_TouchFingerEvent& finger = event.tfinger;
         if (finger.touchId == SDL_MOUSE_TOUCHID) continue;
         if (event.type == SDL_FINGERDOWN)
-          pointerDown(app, false, finger.touchId, finger.fingerId, finger.x * width, finger.y * height);
+          pointerDown(app, false, finger.touchId, finger.fingerId, finger.x * app.logicalWidth, finger.y * height);
         else if (event.type == SDL_FINGERMOTION)
           pointerMove(app, false, finger.touchId, finger.fingerId, finger.y * height);
         else pointerUp(app, false, finger.touchId, finger.fingerId);
@@ -1123,6 +1175,8 @@ int main(int argc, char** argv) {
         SDL_GameControllerClose(app.controller);
         app.controller = nullptr;
         openController(app);
+      } else if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED && app.touchUi) {
+        if (!configureViewport(app)) SDL_Log("Viewport resize failed: %s", SDL_GetError());
       } else if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
         panic(app);
         app.triggerHeld = 0;
@@ -1140,7 +1194,10 @@ int main(int argc, char** argv) {
     if (smoke && smokeFrame == 15) trigger(app, 0, 1, false);
     draw(app);
     if (smoke && smokeFrame == 10) {
-      SDL_Surface* image = SDL_CreateRGBSurfaceWithFormat(0, width, height, 32, SDL_PIXELFORMAT_ARGB8888);
+      int outputWidth = 0, outputHeight = 0;
+      SDL_Surface* image = nullptr;
+      if (SDL_GetRendererOutputSize(app.renderer, &outputWidth, &outputHeight) == 0)
+        image = SDL_CreateRGBSurfaceWithFormat(0, outputWidth, outputHeight, 32, SDL_PIXELFORMAT_ARGB8888);
       if (!image || SDL_RenderReadPixels(app.renderer, nullptr, image->format->format, image->pixels, image->pitch) != 0 ||
           SDL_SaveBMP(image, argv[2]) != 0) {
         std::fprintf(stderr, "Smoke capture failed: %s\n", SDL_GetError());

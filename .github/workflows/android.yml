@@ -88,10 +88,12 @@ jobs:
             python3 packaging/android/tap-header.py "$RUNNER_TEMP/android-sticks.png" instrument
             sleep 2
             adb exec-out screencap -p > "$RUNNER_TEMP/android-instrument.png"
+            python3 packaging/android/tap-header.py "$RUNNER_TEMP/android-instrument.png" pad "$RUNNER_TEMP/android-pad.png"
             adb logcat -d -s SDL:V AndroidRuntime:E > "$RUNNER_TEMP/android-logcat.txt"
             ! cmp -s "$RUNNER_TEMP/android-before.png" "$RUNNER_TEMP/android-common.png"
             ! cmp -s "$RUNNER_TEMP/android-common.png" "$RUNNER_TEMP/android-sticks.png"
             ! cmp -s "$RUNNER_TEMP/android-sticks.png" "$RUNNER_TEMP/android-instrument.png"
+            ! cmp -s "$RUNNER_TEMP/android-instrument.png" "$RUNNER_TEMP/android-pad.png"
             grep -q 'Running main function SDL_main' "$RUNNER_TEMP/android-logcat.txt"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -102,6 +104,7 @@ jobs:
             ${{ runner.temp }}/android-common.png
             ${{ runner.temp }}/android-sticks.png
             ${{ runner.temp }}/android-instrument.png
+            ${{ runner.temp }}/android-pad.png
             ${{ runner.temp }}/android-logcat.txt
           if-no-files-found: warn
       - uses: actions/upload-artifact@v4

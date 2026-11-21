@@ -115,6 +115,7 @@ preset arrows to select a slot or the preset name to load it.
 
 The bottom buttons provide **PANIC**, **EXIT**, **LOAD** and **SAVE** without a
 gamepad. Save to a user slot; release all held pads before loading a preset.
+On wider screens, larger live pads appear beside the instrument controls.
 
 ## Install
 
