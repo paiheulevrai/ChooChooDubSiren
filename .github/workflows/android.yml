@@ -86,7 +86,7 @@ jobs:
             ! cmp -s "$RUNNER_TEMP/android-before.png" "$RUNNER_TEMP/android-after.png"
             grep -q 'Running main function SDL_main' "$RUNNER_TEMP/android-logcat.txt"
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: always()
         with:
           name: android-test-diagnostics
           path: |
